@@ -308,6 +308,35 @@
     box-shadow:0 6px 22px rgba(108,140,255,.35);
   }
   .aisend:disabled{opacity:.5}
+  /* ---------- карточка товара ---------- */
+  .cardhead{display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:4px}
+  .cardhead h3{flex:1}
+  .stockbig{
+    text-align:center; padding:14px; border-radius:15px; margin:14px 0;
+    background:rgba(0,214,143,.07); border:1px solid rgba(0,214,143,.25);
+  }
+  .stockbig.low{background:rgba(255,194,77,.07); border-color:rgba(255,194,77,.35)}
+  .stockbig .n{font-family:'Unbounded'; font-size:26px; font-weight:900; color:var(--grn)}
+  .stockbig.low .n{color:var(--yel)}
+  .stockbig .l{font-size:11px; color:var(--mut); font-weight:800; text-transform:uppercase; letter-spacing:1px; margin-top:4px}
+  .cstats{display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:14px}
+  .cst{
+    background:var(--glass); border:1px solid var(--line); border-radius:13px;
+    padding:11px 8px; text-align:center;
+  }
+  .cst .v{font-family:'Unbounded'; font-size:13px; font-weight:700}
+  .cst .v.g{color:var(--grn)}
+  .cst .k{font-size:9.5px; color:var(--mut); font-weight:800; text-transform:uppercase; letter-spacing:.5px; margin-top:5px}
+  .mchart{
+    background:var(--glass); border:1px solid var(--line); border-radius:13px;
+    padding:12px 10px 6px; margin-bottom:16px;
+  }
+  .mtitle{font-size:10.5px; color:var(--mut); font-weight:800; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; text-align:center}
+  .mbars{display:flex; align-items:flex-end; gap:3px; height:80px}
+  .mbars .barcol{min-width:6px}
+  .mbars .bar{border-radius:4px 4px 1px 1px}
+  .minfo{text-align:center; font-size:11.5px; color:var(--mut); padding:8px 0 4px; min-height:28px; font-weight:700}
+  .minfo b{color:var(--grn); font-family:'Unbounded'; font-size:11.5px}
   @media (prefers-reduced-motion: reduce){
     *{animation:none !important; transition:none !important}
   }
@@ -435,6 +464,39 @@
     </div>
     <div id="delWrap" style="display:none; margin-top:10px">
       <button class="btn r" style="width:100%" onclick="delProduct()">🗑 Видалити товар</button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка: карточка товара -->
+<div class="ov" id="ovCard" onclick="if(event.target===this)closeCard()">
+  <div class="sheet">
+    <div class="cardhead">
+      <h3 id="cdName">Товар</h3>
+    </div>
+    <div class="sub" id="cdPrices"></div>
+    <div class="stockbig" id="cdStockBox">
+      <div class="n num" id="cdStock">0</div>
+      <div class="l">зараз на складі, шт</div>
+    </div>
+    <div class="cstats">
+      <div class="cst"><div class="v num" id="cdTQty">0</div><div class="k">Сьогодні, шт</div></div>
+      <div class="cst"><div class="v num" id="cdMQty">0</div><div class="k">30 днів, шт</div></div>
+      <div class="cst"><div class="v num" id="cdYQty">0</div><div class="k">Рік, шт</div></div>
+    </div>
+    <div class="cstats">
+      <div class="cst"><div class="v g num" id="cdMRev">₴ 0</div><div class="k">Виторг 30 дн</div></div>
+      <div class="cst"><div class="v g num" id="cdMProf">₴ 0</div><div class="k">Прибуток 30 дн</div></div>
+      <div class="cst"><div class="v g num" id="cdYRev">₴ 0</div><div class="k">Виторг за рік</div></div>
+    </div>
+    <div class="mchart">
+      <div class="mtitle">Продажі за 30 днів</div>
+      <div class="mbars" id="cdBars"></div>
+      <div class="minfo" id="cdInfo"></div>
+    </div>
+    <div class="row2">
+      <button class="btn gray" onclick="closeCard()">Закрити</button>
+      <button class="btn b" onclick="editFromCard()">✏️ Редагувати</button>
     </div>
   </div>
 </div>
@@ -646,6 +708,7 @@ function renderProdList(){
       '<div class="meta">Закупка <b>' + uah(p.buy_price) + '</b> · Продаж <b>' + uah(p.sell_price) + '</b> · ' +
       (p.low ? '<span class="lw">залишок ' + p.stock + ' ⚠️</span>' : 'залишок ' + p.stock) +
       '</div></div>';
+    d.querySelector('.info').onclick = () => openCard(p);
     const eb = document.createElement('button');
     eb.className = 'ico'; eb.textContent = '✏️';
     eb.onclick = () => openForm(p);
@@ -710,6 +773,70 @@ async function delProduct(){
   }catch(e){
     toast('❌ ' + e.message);
   }
+}
+
+// ---------- карточка товара ----------
+let cardProd = null;
+
+async function openCard(p){
+  cardProd = p;
+  $('cdName').textContent = p.name;
+  $('cdPrices').textContent = 'Закупка ' + uah(p.buy_price) + ' · Продаж ' + uah(p.sell_price);
+  $('cdStock').textContent = p.stock;
+  $('cdStockBox').className = 'stockbig' + (p.low ? ' low' : '');
+  ['cdTQty','cdMQty','cdYQty'].forEach(id => $(id).textContent = '…');
+  ['cdMRev','cdMProf','cdYRev'].forEach(id => $(id).textContent = '…');
+  $('cdBars').innerHTML = '';
+  $('cdInfo').textContent = 'Завантаження…';
+  $('ovCard').classList.add('on');
+  try{
+    const r = await fetch(API + '/products/' + p.id + '/card');
+    const c = await r.json();
+    if (!r.ok) throw new Error(c.detail || 'Помилка');
+    animNum($('cdStock'), c.stock, false);
+    animNum($('cdTQty'), c.today.qty, false);
+    animNum($('cdMQty'), c.month.qty, false);
+    animNum($('cdYQty'), c.year.qty,  false);
+    animNum($('cdMRev'),  c.month.revenue, true);
+    animNum($('cdMProf'), c.month.profit,  true);
+    animNum($('cdYRev'),  c.year.revenue,  true);
+    renderCardBars(c.days);
+  }catch(e){
+    $('cdInfo').textContent = '❌ ' + e.message;
+  }
+}
+
+function renderCardBars(days){
+  const w = $('cdBars');
+  w.innerHTML = '';
+  if (!days || !days.length){
+    $('cdInfo').textContent = 'За 30 днів продажів не було 💤';
+    return;
+  }
+  const max = Math.max(...days.map(d => d.revenue), 1);
+  const heights = [];
+  days.forEach(d => {
+    const col = document.createElement('div');
+    col.className = 'barcol';
+    const h = Math.max(3, Math.round(d.revenue / max * 68));
+    heights.push(h);
+    col.innerHTML = '<div class="bar' + (d.revenue === max && d.revenue > 0 ? ' max' : '') + '"></div>';
+    col.onclick = () => {
+      $('cdInfo').innerHTML = d.day + ': <b>' + uah(d.revenue) + '</b> · ' + d.qty + ' шт';
+    };
+    w.appendChild(col);
+  });
+  requestAnimationFrame(() => {
+    w.querySelectorAll('.bar').forEach((b, i) => b.style.height = heights[i] + 'px');
+  });
+  $('cdInfo').textContent = 'Тапни на стовпчик';
+}
+
+function closeCard(){ $('ovCard').classList.remove('on'); }
+
+function editFromCard(){
+  closeCard();
+  if (cardProd) openForm(cardProd);
 }
 
 // ---------- сьогодні ----------
