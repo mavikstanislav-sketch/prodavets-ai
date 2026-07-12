@@ -423,3 +423,72 @@ async def advisor(a: AdvisorIn):
     if not answer:
         raise HTTPException(502, "AI повернув порожню відповідь")
     return {"answer": answer}
+
+
+# ------------------------------------------------------------
+#  КАРТОЧКА ТОВАРА (детальная статистика по одному товару)
+# ------------------------------------------------------------
+@app.get("/products/{product_id}/card")
+async def product_card(product_id: int):
+    """Всё об одном товаре: остаток, продажи за периоды, график за 30 дней."""
+    start, end = today_bounds()
+    month_start = (datetime.now(KYIV) - timedelta(days=29)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).astimezone(timezone.utc)
+    year_start = (datetime.now(KYIV) - timedelta(days=364)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).astimezone(timezone.utc)
+
+    async with pool.acquire() as con:
+        p = await con.fetchrow("SELECT * FROM products WHERE id=$1;", product_id)
+        if not p:
+            raise HTTPException(404, "Товар не знайдено")
+
+        async def agg(since):
+            r = await con.fetchrow(
+                """SELECT COALESCE(SUM(qty),0) AS qty,
+                          COALESCE(SUM(sell_price*qty),0) AS revenue,
+                          COALESCE(SUM((sell_price-buy_price)*qty),0) AS profit
+                   FROM sales WHERE product_id=$1 AND sold_at >= $2;""",
+                product_id, since,
+            )
+            return {
+                "qty": int(r["qty"]),
+                "revenue": float(r["revenue"]),
+                "profit": float(r["profit"]),
+            }
+
+        today_s = await agg(start)
+        month_s = await agg(month_start)
+        year_s = await agg(year_start)
+
+        days_rows = await con.fetch(
+            """SELECT DATE(sold_at AT TIME ZONE 'Europe/Kyiv') AS day,
+                      COALESCE(SUM(qty),0) AS qty,
+                      COALESCE(SUM(sell_price*qty),0) AS revenue
+               FROM sales
+               WHERE product_id=$1 AND sold_at >= $2
+               GROUP BY day ORDER BY day;""",
+            product_id, month_start,
+        )
+
+    return {
+        "id": p["id"],
+        "name": p["name"],
+        "buy_price": float(p["buy_price"]),
+        "sell_price": float(p["sell_price"]),
+        "stock": p["stock"],
+        "min_stock": p["min_stock"],
+        "low": p["stock"] <= p["min_stock"],
+        "today": today_s,
+        "month": month_s,
+        "year": year_s,
+        "days": [
+            {
+                "day": r["day"].strftime("%d.%m"),
+                "qty": int(r["qty"]),
+                "revenue": float(r["revenue"]),
+            }
+            for r in days_rows
+        ],
+    }
