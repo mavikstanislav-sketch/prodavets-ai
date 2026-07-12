@@ -284,3 +284,142 @@ async def stats_range(days: int = 7):
         }
         for r in rows
     ]
+
+
+# ------------------------------------------------------------
+#  AI-СОВЕТНИК
+# ------------------------------------------------------------
+import httpx
+
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
+
+
+class AdvisorIn(BaseModel):
+    question: str
+    history: list = []  # [{"role": "user"/"assistant", "content": "..."}]
+
+
+def extract_text(data: dict) -> str:
+    """Достаёт текст из ответа модели (пропускает thinking-блоки)."""
+    parts = []
+    for block in data.get("content", []):
+        if block.get("type") == "text":
+            parts.append(block.get("text", ""))
+    return "\n".join(parts).strip()
+
+
+async def collect_store_data() -> str:
+    """Собирает сводку по магазину для AI: товары, сегодня, 30 дней, топы."""
+    start, end = today_bounds()
+    month_start = (datetime.now(KYIV) - timedelta(days=29)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).astimezone(timezone.utc)
+
+    async with pool.acquire() as con:
+        prods = await con.fetch(
+            "SELECT name, buy_price, sell_price, stock, min_stock FROM products ORDER BY name;"
+        )
+        today = await con.fetchrow(
+            """SELECT COALESCE(SUM(sell_price*qty),0) AS revenue,
+                      COALESCE(SUM((sell_price-buy_price)*qty),0) AS profit,
+                      COUNT(*) AS cnt
+               FROM sales WHERE sold_at >= $1 AND sold_at < $2;""",
+            start, end,
+        )
+        month = await con.fetchrow(
+            """SELECT COALESCE(SUM(sell_price*qty),0) AS revenue,
+                      COALESCE(SUM((sell_price-buy_price)*qty),0) AS profit,
+                      COUNT(*) AS cnt
+               FROM sales WHERE sold_at >= $1;""",
+            month_start,
+        )
+        top = await con.fetch(
+            """SELECT p.name,
+                      SUM(s.qty) AS qty,
+                      SUM(s.sell_price*s.qty) AS revenue,
+                      SUM((s.sell_price-s.buy_price)*s.qty) AS profit
+               FROM sales s JOIN products p ON p.id = s.product_id
+               WHERE s.sold_at >= $1
+               GROUP BY p.name ORDER BY revenue DESC LIMIT 15;""",
+            month_start,
+        )
+
+    lines = ["=== ТОВАРИ НА СКЛАДІ ==="]
+    for r in prods:
+        low = " (ЗАКІНЧУЄТЬСЯ!)" if r["stock"] <= r["min_stock"] else ""
+        lines.append(
+            f"- {r['name']}: залишок {r['stock']} шт{low}, "
+            f"закупка {float(r['buy_price']):.2f} грн, продаж {float(r['sell_price']):.2f} грн"
+        )
+    if not prods:
+        lines.append("(товарів немає)")
+
+    lines.append("\n=== СЬОГОДНІ ===")
+    lines.append(
+        f"Виторг: {float(today['revenue']):.2f} грн, прибуток: {float(today['profit']):.2f} грн, "
+        f"продажів: {today['cnt']}"
+    )
+    lines.append("\n=== ЗА 30 ДНІВ ===")
+    lines.append(
+        f"Виторг: {float(month['revenue']):.2f} грн, прибуток: {float(month['profit']):.2f} грн, "
+        f"продажів: {month['cnt']}"
+    )
+    lines.append("\n=== ТОП ТОВАРІВ ЗА 30 ДНІВ ===")
+    for r in top:
+        lines.append(
+            f"- {r['name']}: продано {r['qty']} шт, виторг {float(r['revenue']):.2f} грн, "
+            f"прибуток {float(r['profit']):.2f} грн"
+        )
+    if not top:
+        lines.append("(продажів ще не було)")
+
+    return "\n".join(lines)
+
+
+@app.post("/advisor")
+async def advisor(a: AdvisorIn):
+    """AI-советник: отвечает на вопросы владельца по данным магазина."""
+    question = a.question.strip()
+    if not question:
+        raise HTTPException(400, "Питання не може бути порожнім")
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(500, "ANTHROPIC_API_KEY не заданий на сервері")
+
+    store_data = await collect_store_data()
+
+    system = (
+        "Ти — AI-порадник власника невеликого магазину в Україні. "
+        "Відповідай українською, коротко і по суті (2-6 речень), з конкретними цифрами з даних. "
+        "Якщо доречно — дай практичну пораду (що докупити, на що звернути увагу). "
+        "Не вигадуй дані, яких немає. Ось актуальні дані магазину:\n\n" + store_data
+    )
+
+    messages = []
+    for m in a.history[-8:]:
+        if m.get("role") in ("user", "assistant") and m.get("content"):
+            messages.append({"role": m["role"], "content": str(m["content"])[:2000]})
+    messages.append({"role": "user", "content": question[:2000]})
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-sonnet-5",
+                "max_tokens": 1000,
+                "system": system,
+                "messages": messages,
+            },
+        )
+    if resp.status_code != 200:
+        print("Anthropic error:", resp.status_code, resp.text[:300])
+        raise HTTPException(502, "AI тимчасово недоступний, спробуй пізніше")
+
+    answer = extract_text(resp.json())
+    if not answer:
+        raise HTTPException(502, "AI повернув порожню відповідь")
+    return {"answer": answer}
