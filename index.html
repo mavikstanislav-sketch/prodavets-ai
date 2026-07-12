@@ -271,6 +271,43 @@
   }
   #toast.on{opacity:1; transform:translateX(-50%) translateY(0)}
   .spin{text-align:center; padding:40px; color:var(--mut); font-size:14px; font-weight:700}
+  /* ---------- AI-чат ---------- */
+  .aiwrap{display:flex; flex-direction:column; min-height:calc(100vh - 200px)}
+  .aimsgs{flex:1; display:flex; flex-direction:column; gap:10px; margin-bottom:14px}
+  .msg{
+    max-width:86%; padding:12px 15px; border-radius:18px; font-size:14px;
+    line-height:1.55; font-weight:600; white-space:pre-wrap; word-break:break-word;
+  }
+  .msg.u{
+    align-self:flex-end; background:var(--grad); color:#fff;
+    border-bottom-right-radius:6px; box-shadow:0 4px 18px rgba(108,140,255,.3);
+  }
+  .msg.a{
+    align-self:flex-start;
+    background:linear-gradient(160deg,var(--glass2),var(--glass));
+    border:1px solid var(--line); border-bottom-left-radius:6px;
+  }
+  .msg.think{color:var(--mut)}
+  .msg.think i{animation:pulse 1.2s infinite; font-style:normal}
+  .aisugs{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px}
+  .sug{
+    padding:9px 14px; border-radius:20px; border:1px solid rgba(108,140,255,.4);
+    background:rgba(108,140,255,.08); color:var(--acc); font-size:12.5px;
+    font-weight:800; cursor:pointer; font-family:'Manrope';
+  }
+  .airow{display:flex; gap:8px; position:sticky; bottom:96px}
+  .airow input{
+    flex:1; padding:14px 16px; border-radius:15px; border:1px solid var(--line);
+    background:rgba(19,26,44,.95); color:var(--txt); font-size:15px; outline:none;
+    font-family:'Manrope'; font-weight:600;
+  }
+  .airow input:focus{border-color:var(--acc)}
+  .aisend{
+    width:52px; border-radius:15px; border:none; background:var(--grad);
+    color:#fff; font-size:19px; cursor:pointer;
+    box-shadow:0 6px 22px rgba(108,140,255,.35);
+  }
+  .aisend:disabled{opacity:.5}
   @media (prefers-reduced-motion: reduce){
     *{animation:none !important; transition:none !important}
   }
@@ -323,6 +360,25 @@
   <div class="chart">
     <div class="bars" id="bars"><div class="spin" style="width:100%">Завантаження…</div></div>
     <div class="chartinfo" id="chartInfo">Тапни на стовпчик, щоб побачити день</div>
+  </div>
+</div>
+
+<!-- ЭКРАН: AI-ПОРАДНИК -->
+<div class="page" id="pageAI">
+  <div class="aiwrap">
+    <div class="aimsgs" id="aiMsgs">
+      <div class="msg a">Привіт! Я твій AI-порадник 🤖 Бачу всі товари, залишки та продажі магазину. Питай що завгодно!</div>
+    </div>
+    <div class="aisugs" id="aiSugs">
+      <button class="sug" onclick="askSug(this)">Що краще продається?</button>
+      <button class="sug" onclick="askSug(this)">Скільки я заробив за місяць?</button>
+      <button class="sug" onclick="askSug(this)">Що треба докупити?</button>
+      <button class="sug" onclick="askSug(this)">Дай пораду по магазину</button>
+    </div>
+    <div class="airow">
+      <input id="aiInp" placeholder="Спитай про свій магазин…" onkeydown="if(event.key==='Enter')askAI()">
+      <button class="aisend" id="aiBtn" onclick="askAI()">➤</button>
+    </div>
   </div>
 </div>
 
@@ -391,6 +447,7 @@
   <button id="nb1" onclick="go(1)"><span class="i">📦</span>Товари</button>
   <button id="nb2" onclick="go(2)"><span class="i">📊</span>Сьогодні</button>
   <button id="nb3" onclick="go(3)"><span class="i">📈</span>Динаміка</button>
+  <button id="nb4" onclick="go(4)"><span class="i">🤖</span>AI</button>
 </div>
 
 <script>
@@ -432,7 +489,7 @@ function toast(msg){
 }
 
 // ---------- навигация ----------
-const pages = ['pageSale', 'pageProducts', 'pageToday', 'pageChart'];
+const pages = ['pageSale', 'pageProducts', 'pageToday', 'pageChart', 'pageAI'];
 function go(i){
   pages.forEach((p, k) => {
     $(p).classList.toggle('on', k === i);
@@ -441,6 +498,56 @@ function go(i){
   if (i === 0 || i === 1) loadProducts();
   if (i === 2) loadToday();
   if (i === 3) loadRange(curPeriod);
+}
+
+// ---------- AI-порадник ----------
+let aiHist = [];   // история диалога для сервера
+let aiBusy = false;
+
+function askSug(btn){
+  $('aiInp').value = btn.textContent;
+  askAI();
+}
+
+function addMsg(text, who){
+  const d = document.createElement('div');
+  d.className = 'msg ' + who;
+  d.textContent = text;
+  $('aiMsgs').appendChild(d);
+  d.scrollIntoView({behavior: 'smooth', block: 'end'});
+  return d;
+}
+
+async function askAI(){
+  if (aiBusy) return;
+  const inp = $('aiInp');
+  const q = inp.value.trim();
+  if (!q) return;
+  inp.value = '';
+  $('aiSugs').style.display = 'none';
+  addMsg(q, 'u');
+  const th = addMsg('Думаю', 'a think');
+  th.innerHTML = 'Думаю<i>…</i>';
+  aiBusy = true;
+  $('aiBtn').disabled = true;
+  try{
+    const r = await fetch(API + '/advisor', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ question: q, history: aiHist.slice(-8) })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Помилка');
+    th.remove();
+    addMsg(d.answer, 'a');
+    aiHist.push({role: 'user', content: q});
+    aiHist.push({role: 'assistant', content: d.answer});
+  }catch(e){
+    th.remove();
+    addMsg('❌ ' + e.message, 'a');
+  }
+  aiBusy = false;
+  $('aiBtn').disabled = false;
 }
 
 // ---------- товары ----------
