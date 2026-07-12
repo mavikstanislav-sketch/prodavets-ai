@@ -1,1 +1,504 @@
 
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Продавець AI</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --bg:#0f1420; --card:#1a2132; --card2:#222b42; --line:#2c3752;
+    --txt:#eef2ff; --mut:#8f9bb8; --acc:#4f8cff; --grn:#2ecc71;
+    --red:#ff5c5c; --yel:#ffb84d; --r:16px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{
+    background:var(--bg); color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    padding-bottom:86px; min-height:100vh;
+  }
+  /* ---------- шапка ---------- */
+  .top{
+    position:sticky; top:0; z-index:20; background:rgba(15,20,32,.92);
+    backdrop-filter:blur(10px); padding:14px 16px 10px;
+    border-bottom:1px solid var(--line);
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .top h1{font-size:19px; font-weight:800}
+  .top h1 span{color:var(--acc)}
+  .chip{
+    background:var(--card2); border:1px solid var(--line); border-radius:20px;
+    padding:6px 12px; font-size:13px; font-weight:700; color:var(--grn);
+  }
+  /* ---------- вкладки-экраны ---------- */
+  .page{display:none; padding:14px}
+  .page.on{display:block}
+  /* ---------- ПРОДАЖ: сетка товаров ---------- */
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+  .pbtn{
+    background:var(--card); border:1px solid var(--line); border-radius:var(--r);
+    padding:14px 12px; cursor:pointer; text-align:left; color:var(--txt);
+    transition:transform .08s; position:relative; min-height:96px;
+    display:flex; flex-direction:column; justify-content:space-between;
+  }
+  .pbtn:active{transform:scale(.96)}
+  .pbtn .nm{font-size:15px; font-weight:700; line-height:1.25; word-break:break-word}
+  .pbtn .pr{font-size:17px; font-weight:800; color:var(--acc); margin-top:8px}
+  .pbtn .st{font-size:12px; color:var(--mut); margin-top:2px}
+  .pbtn.low .st{color:var(--yel); font-weight:700}
+  .pbtn.out{opacity:.45}
+  .empty{
+    text-align:center; color:var(--mut); padding:48px 20px; font-size:15px; line-height:1.6;
+  }
+  /* ---------- модалка продажи ---------- */
+  .ov{
+    display:none; position:fixed; inset:0; background:rgba(0,0,0,.6);
+    z-index:50; align-items:flex-end; justify-content:center;
+  }
+  .ov.on{display:flex}
+  .sheet{
+    background:var(--card); width:100%; max-width:480px;
+    border-radius:22px 22px 0 0; padding:20px 18px 26px;
+    border:1px solid var(--line); border-bottom:none;
+  }
+  .sheet h3{font-size:18px; font-weight:800; margin-bottom:4px}
+  .sheet .sub{color:var(--mut); font-size:13px; margin-bottom:16px}
+  .qty{
+    display:flex; align-items:center; justify-content:center; gap:18px; margin:10px 0 16px;
+  }
+  .qbtn{
+    width:52px; height:52px; border-radius:50%; border:1px solid var(--line);
+    background:var(--card2); color:var(--txt); font-size:26px; font-weight:700; cursor:pointer;
+  }
+  .qbtn:active{transform:scale(.92)}
+  .qnum{font-size:34px; font-weight:800; min-width:64px; text-align:center}
+  .total{
+    text-align:center; font-size:15px; color:var(--mut); margin-bottom:16px;
+  }
+  .total b{color:var(--grn); font-size:19px}
+  .row2{display:flex; gap:10px}
+  .btn{
+    flex:1; padding:15px; border-radius:14px; border:none; font-size:16px;
+    font-weight:800; cursor:pointer; color:#fff;
+  }
+  .btn.g{background:var(--grn)}
+  .btn.b{background:var(--acc)}
+  .btn.r{background:var(--red)}
+  .btn.gray{background:var(--card2); color:var(--mut); border:1px solid var(--line)}
+  .btn:active{transform:scale(.97)}
+  .btn:disabled{opacity:.5}
+  /* ---------- ТОВАРИ ---------- */
+  .item{
+    background:var(--card); border:1px solid var(--line); border-radius:var(--r);
+    padding:13px 14px; margin-bottom:10px; display:flex; align-items:center; gap:10px;
+  }
+  .item .info{flex:1; min-width:0}
+  .item .nm{font-size:15px; font-weight:700}
+  .item .meta{font-size:12.5px; color:var(--mut); margin-top:3px}
+  .item .meta b{color:var(--txt)}
+  .item .meta .lw{color:var(--yel); font-weight:700}
+  .ico{
+    width:38px; height:38px; border-radius:10px; border:1px solid var(--line);
+    background:var(--card2); color:var(--txt); font-size:16px; cursor:pointer; flex:none;
+  }
+  .addbtn{
+    width:100%; padding:15px; border-radius:14px; border:1px dashed var(--acc);
+    background:transparent; color:var(--acc); font-size:15px; font-weight:800;
+    cursor:pointer; margin-bottom:14px;
+  }
+  /* ---------- форма товара ---------- */
+  .fld{margin-bottom:12px}
+  .fld label{display:block; font-size:12.5px; color:var(--mut); margin-bottom:6px; font-weight:700}
+  .fld input{
+    width:100%; padding:13px 14px; border-radius:12px; border:1px solid var(--line);
+    background:var(--card2); color:var(--txt); font-size:16px; outline:none;
+  }
+  .fld input:focus{border-color:var(--acc)}
+  .frow{display:flex; gap:10px}
+  .frow .fld{flex:1}
+  /* ---------- СЬОГОДНІ ---------- */
+  .stats{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px}
+  .scard{
+    background:var(--card); border:1px solid var(--line); border-radius:var(--r);
+    padding:14px;
+  }
+  .scard .lbl{font-size:12px; color:var(--mut); font-weight:700; text-transform:uppercase; letter-spacing:.4px}
+  .scard .val{font-size:22px; font-weight:800; margin-top:6px}
+  .scard .val.g{color:var(--grn)}
+  .scard .val.b{color:var(--acc)}
+  h2.sec{font-size:15px; font-weight:800; margin:18px 0 10px; color:var(--mut)}
+  .sale{
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:11px 14px; margin-bottom:8px; display:flex; justify-content:space-between;
+    align-items:center; font-size:14px;
+  }
+  .sale .t{color:var(--mut); font-size:12px; margin-top:2px}
+  .sale .sum{font-weight:800; color:var(--grn); white-space:nowrap; margin-left:10px}
+  /* ---------- нижняя навигация ---------- */
+  .nav{
+    position:fixed; bottom:0; left:0; right:0; z-index:30;
+    background:rgba(15,20,32,.95); backdrop-filter:blur(10px);
+    border-top:1px solid var(--line); display:flex;
+    padding:8px 6px calc(10px + env(safe-area-inset-bottom));
+  }
+  .nav button{
+    flex:1; background:none; border:none; color:var(--mut); cursor:pointer;
+    font-size:11.5px; font-weight:700; display:flex; flex-direction:column;
+    align-items:center; gap:3px; padding:4px 0;
+  }
+  .nav button .i{font-size:21px}
+  .nav button.on{color:var(--acc)}
+  /* ---------- тост ---------- */
+  #toast{
+    position:fixed; left:50%; transform:translateX(-50%) translateY(20px);
+    bottom:96px; background:var(--card2); border:1px solid var(--line);
+    color:var(--txt); padding:12px 20px; border-radius:14px; font-size:14px;
+    font-weight:700; opacity:0; transition:.25s; z-index:99; pointer-events:none;
+    max-width:88%; text-align:center;
+  }
+  #toast.on{opacity:1; transform:translateX(-50%) translateY(0)}
+  .spin{
+    text-align:center; padding:40px; color:var(--mut); font-size:14px;
+  }
+</style>
+</head>
+<body>
+
+<!-- Шапка -->
+<div class="top">
+  <h1>🛒 Продавець <span>AI</span></h1>
+  <div class="chip" id="topRevenue">₴ 0</div>
+</div>
+
+<!-- ЭКРАН: ПРОДАЖ -->
+<div class="page on" id="pageSale">
+  <div class="grid" id="saleGrid"><div class="spin">Завантаження…</div></div>
+</div>
+
+<!-- ЭКРАН: ТОВАРИ -->
+<div class="page" id="pageProducts">
+  <button class="addbtn" onclick="openForm()">＋ Додати товар</button>
+  <div id="prodList"><div class="spin">Завантаження…</div></div>
+</div>
+
+<!-- ЭКРАН: СЬОГОДНІ -->
+<div class="page" id="pageToday">
+  <div class="stats">
+    <div class="scard"><div class="lbl">Виторг</div><div class="val g" id="stRev">₴ 0</div></div>
+    <div class="scard"><div class="lbl">Прибуток</div><div class="val b" id="stProfit">₴ 0</div></div>
+    <div class="scard"><div class="lbl">Продажів</div><div class="val" id="stCount">0</div></div>
+    <div class="scard"><div class="lbl">Середній чек</div><div class="val" id="stAvg">₴ 0</div></div>
+  </div>
+  <h2 class="sec">Останні продажі</h2>
+  <div id="salesFeed"><div class="spin">Завантаження…</div></div>
+</div>
+
+<!-- Модалка: продажа -->
+<div class="ov" id="ovSale" onclick="if(event.target===this)closeSale()">
+  <div class="sheet">
+    <h3 id="msName">Товар</h3>
+    <div class="sub" id="msInfo"></div>
+    <div class="qty">
+      <button class="qbtn" onclick="chQty(-1)">−</button>
+      <div class="qnum" id="msQty">1</div>
+      <button class="qbtn" onclick="chQty(1)">＋</button>
+    </div>
+    <div class="total">Сума: <b id="msTotal">₴ 0</b></div>
+    <div class="row2">
+      <button class="btn gray" onclick="closeSale()">Скасувати</button>
+      <button class="btn g" id="msBtn" onclick="doSale()">💰 Продати</button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка: форма товара -->
+<div class="ov" id="ovForm" onclick="if(event.target===this)closeForm()">
+  <div class="sheet">
+    <h3 id="mfTitle">Новий товар</h3>
+    <div class="sub">Заповни поля та збережи</div>
+    <div class="fld">
+      <label>Назва товару</label>
+      <input id="fName" placeholder="Кока-кола 0.5">
+    </div>
+    <div class="frow">
+      <div class="fld">
+        <label>Закупка, ₴</label>
+        <input id="fBuy" type="number" inputmode="decimal" placeholder="15">
+      </div>
+      <div class="fld">
+        <label>Продаж, ₴</label>
+        <input id="fSell" type="number" inputmode="decimal" placeholder="25">
+      </div>
+    </div>
+    <div class="frow">
+      <div class="fld">
+        <label>Залишок, шт</label>
+        <input id="fStock" type="number" inputmode="numeric" placeholder="20">
+      </div>
+      <div class="fld">
+        <label>Мінімум, шт</label>
+        <input id="fMin" type="number" inputmode="numeric" placeholder="3">
+      </div>
+    </div>
+    <div class="row2" style="margin-top:6px">
+      <button class="btn gray" onclick="closeForm()">Скасувати</button>
+      <button class="btn b" id="mfBtn" onclick="saveProduct()">💾 Зберегти</button>
+    </div>
+    <div id="delWrap" style="display:none; margin-top:10px">
+      <button class="btn r" style="width:100%" onclick="delProduct()">🗑 Видалити товар</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- Навигация -->
+<div class="nav">
+  <button class="on" id="nb0" onclick="go(0)"><span class="i">🛒</span>Продаж</button>
+  <button id="nb1" onclick="go(1)"><span class="i">📦</span>Товари</button>
+  <button id="nb2" onclick="go(2)"><span class="i">📊</span>Сьогодні</button>
+</div>
+
+<script>
+const API = 'https://prodavets-ai-production.up.railway.app';
+
+// Telegram Mini App
+const tg = window.Telegram && window.Telegram.WebApp;
+if (tg) { try { tg.ready(); tg.expand(); } catch(e){} }
+
+let products = [];      // кэш товаров
+let saleProd = null;    // товар в модалке продажи
+let saleQty  = 1;
+let editId   = null;    // id товара в форме (null = новый)
+
+const $ = id => document.getElementById(id);
+const uah = n => '₴ ' + (Math.round(n * 100) / 100).toLocaleString('uk-UA');
+
+function toast(msg){
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('on');
+  clearTimeout(t._tm);
+  t._tm = setTimeout(() => t.classList.remove('on'), 2200);
+}
+
+// ---------- навигация ----------
+const pages = ['pageSale', 'pageProducts', 'pageToday'];
+function go(i){
+  pages.forEach((p, k) => {
+    $(p).classList.toggle('on', k === i);
+    $('nb' + k).classList.toggle('on', k === i);
+  });
+  if (i === 0 || i === 1) loadProducts();
+  if (i === 2) loadToday();
+}
+
+// ---------- загрузка товаров ----------
+async function loadProducts(){
+  try{
+    const r = await fetch(API + '/products');
+    products = await r.json();
+    renderSaleGrid();
+    renderProdList();
+  }catch(e){
+    $('saleGrid').innerHTML = '<div class="empty">Не вдалося завантажити 😔<br>Перевір інтернет і спробуй ще раз</div>';
+  }
+}
+
+function renderSaleGrid(){
+  const g = $('saleGrid');
+  if (!products.length){
+    g.innerHTML = '<div class="empty" style="grid-column:1/-1">Товарів поки немає 📦<br>Додай перший у вкладці «Товари»</div>';
+    return;
+  }
+  g.innerHTML = '';
+  products.forEach(p => {
+    const b = document.createElement('button');
+    b.className = 'pbtn' + (p.stock <= 0 ? ' out' : p.low ? ' low' : '');
+    b.innerHTML =
+      '<div class="nm">' + esc(p.name) + '</div>' +
+      '<div><div class="pr">' + uah(p.sell_price) + '</div>' +
+      '<div class="st">' + (p.stock <= 0 ? 'немає в наявності' :
+        'залишок: ' + p.stock + (p.low ? ' ⚠️' : '')) + '</div></div>';
+    b.onclick = () => openSale(p);
+    g.appendChild(b);
+  });
+}
+
+function esc(s){
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+// ---------- продажа ----------
+function openSale(p){
+  if (p.stock <= 0){ toast('Товар закінчився 😕'); return; }
+  saleProd = p; saleQty = 1;
+  $('msName').textContent = p.name;
+  $('msInfo').textContent = 'Ціна: ' + uah(p.sell_price) + ' · Залишок: ' + p.stock + ' шт';
+  updSale();
+  $('ovSale').classList.add('on');
+}
+function closeSale(){ $('ovSale').classList.remove('on'); }
+function chQty(d){
+  if (!saleProd) return;
+  saleQty = Math.max(1, Math.min(saleProd.stock, saleQty + d));
+  updSale();
+}
+function updSale(){
+  $('msQty').textContent = saleQty;
+  $('msTotal').textContent = uah(saleQty * saleProd.sell_price);
+}
+async function doSale(){
+  if (!saleProd) return;
+  const btn = $('msBtn');
+  btn.disabled = true;
+  try{
+    const r = await fetch(API + '/sales', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ product_id: saleProd.id, qty: saleQty })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Помилка');
+    closeSale();
+    toast('✅ Продано: ' + saleProd.name + ' × ' + saleQty);
+    if (tg && tg.HapticFeedback){ try{ tg.HapticFeedback.notificationOccurred('success'); }catch(e){} }
+    loadProducts();
+    loadTopRevenue();
+  }catch(e){
+    toast('❌ ' + e.message);
+  }
+  btn.disabled = false;
+}
+
+// ---------- список товаров ----------
+function renderProdList(){
+  const w = $('prodList');
+  if (!products.length){
+    w.innerHTML = '<div class="empty">Список порожній.<br>Натисни «＋ Додати товар» 👆</div>';
+    return;
+  }
+  w.innerHTML = '';
+  products.forEach(p => {
+    const d = document.createElement('div');
+    d.className = 'item';
+    d.innerHTML =
+      '<div class="info"><div class="nm">' + esc(p.name) + '</div>' +
+      '<div class="meta">Закупка <b>' + uah(p.buy_price) + '</b> · Продаж <b>' + uah(p.sell_price) + '</b> · ' +
+      (p.low ? '<span class="lw">залишок ' + p.stock + ' ⚠️</span>' : 'залишок ' + p.stock) +
+      '</div></div>';
+    const eb = document.createElement('button');
+    eb.className = 'ico'; eb.textContent = '✏️';
+    eb.onclick = () => openForm(p);
+    d.appendChild(eb);
+    w.appendChild(d);
+  });
+}
+
+// ---------- форма товара ----------
+function openForm(p){
+  editId = p ? p.id : null;
+  $('mfTitle').textContent = p ? 'Редагувати товар' : 'Новий товар';
+  $('fName').value  = p ? p.name : '';
+  $('fBuy').value   = p ? p.buy_price : '';
+  $('fSell').value  = p ? p.sell_price : '';
+  $('fStock').value = p ? p.stock : '';
+  $('fMin').value   = p ? p.min_stock : '';
+  $('delWrap').style.display = p ? 'block' : 'none';
+  $('ovForm').classList.add('on');
+}
+function closeForm(){ $('ovForm').classList.remove('on'); }
+
+async function saveProduct(){
+  const name = $('fName').value.trim();
+  if (!name){ toast('Введи назву товару'); return; }
+  const body = {
+    name,
+    buy_price:  parseFloat($('fBuy').value)  || 0,
+    sell_price: parseFloat($('fSell').value) || 0,
+    stock:      parseInt($('fStock').value)  || 0,
+    min_stock:  parseInt($('fMin').value)    || 3
+  };
+  const btn = $('mfBtn');
+  btn.disabled = true;
+  try{
+    const url = editId ? API + '/products/' + editId : API + '/products';
+    const r = await fetch(url, {
+      method: editId ? 'PUT' : 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Помилка');
+    closeForm();
+    toast(editId ? '✅ Збережено' : '✅ Товар додано');
+    loadProducts();
+  }catch(e){
+    toast('❌ ' + e.message);
+  }
+  btn.disabled = false;
+}
+
+async function delProduct(){
+  if (!editId) return;
+  if (!confirm('Видалити товар разом з історією продажів?')) return;
+  try{
+    const r = await fetch(API + '/products/' + editId, { method: 'DELETE' });
+    if (!r.ok) throw new Error('Помилка видалення');
+    closeForm();
+    toast('🗑 Товар видалено');
+    loadProducts();
+  }catch(e){
+    toast('❌ ' + e.message);
+  }
+}
+
+// ---------- статистика ----------
+async function loadToday(){
+  try{
+    const r = await fetch(API + '/stats/today');
+    const s = await r.json();
+    $('stRev').textContent    = uah(s.revenue || 0);
+    $('stProfit').textContent = uah(s.profit  || 0);
+    $('stCount').textContent  = s.sales_count || 0;
+    $('stAvg').textContent    = uah(s.sales_count ? s.revenue / s.sales_count : 0);
+  }catch(e){}
+  try{
+    const r = await fetch(API + '/sales/recent');
+    const list = await r.json();
+    const w = $('salesFeed');
+    if (!Array.isArray(list) || !list.length){
+      w.innerHTML = '<div class="empty">Продажів сьогодні ще не було 💤</div>';
+      return;
+    }
+    w.innerHTML = '';
+    list.forEach(s => {
+      const d = document.createElement('div');
+      d.className = 'sale';
+      d.innerHTML =
+        '<div><div>' + esc(s.name || 'Товар') + ' × ' + (s.qty || 1) + '</div>' +
+        '<div class="t">' + esc((s.date || '') + ' ' + (s.time || '')) + '</div></div>' +
+        '<div class="sum">' + uah(s.total || 0) + '</div>';
+      w.appendChild(d);
+    });
+  }catch(e){}
+}
+
+async function loadTopRevenue(){
+  try{
+    const r = await fetch(API + '/stats/today');
+    const s = await r.json();
+    $('topRevenue').textContent = uah(s.revenue || 0);
+  }catch(e){}
+}
+
+// ---------- старт ----------
+loadProducts();
+loadTopRevenue();
+setInterval(loadTopRevenue, 30000);
+</script>
+</body>
+</html>
