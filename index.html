@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="uk">
 <head>
@@ -6,160 +5,274 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Продавець AI</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Unbounded:wght@700;900&display=swap&subset=cyrillic" rel="stylesheet">
 <style>
   :root{
-    --bg:#0f1420; --card:#1a2132; --card2:#222b42; --line:#2c3752;
-    --txt:#eef2ff; --mut:#8f9bb8; --acc:#4f8cff; --grn:#2ecc71;
-    --red:#ff5c5c; --yel:#ffb84d; --r:16px;
+    --bg:#070b14;
+    --glass:rgba(255,255,255,.05);
+    --glass2:rgba(255,255,255,.085);
+    --line:rgba(255,255,255,.09);
+    --txt:#f2f5ff; --mut:#7f8bab;
+    --acc:#6c8cff; --vio:#a06bff;
+    --grn:#00d68f; --red:#ff5c7a; --yel:#ffc24d;
+    --grad:linear-gradient(135deg,#6c8cff 0%,#a06bff 100%);
+    --gradGrn:linear-gradient(180deg,#00d68f 0%,#00a06c 100%);
+    --r:18px;
   }
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   body{
     background:var(--bg); color:var(--txt);
-    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-    padding-bottom:86px; min-height:100vh;
+    font-family:'Manrope',-apple-system,sans-serif;
+    padding-bottom:92px; min-height:100vh; overflow-x:hidden;
   }
+  /* фоновое свечение */
+  body::before{
+    content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
+    background:
+      radial-gradient(600px 400px at 85% -5%, rgba(160,107,255,.16), transparent 65%),
+      radial-gradient(700px 500px at -10% 108%, rgba(0,214,143,.10), transparent 65%),
+      radial-gradient(500px 350px at 50% 40%, rgba(108,140,255,.06), transparent 70%);
+  }
+  .num{font-family:'Unbounded',sans-serif; font-variant-numeric:tabular-nums}
   /* ---------- шапка ---------- */
   .top{
-    position:sticky; top:0; z-index:20; background:rgba(15,20,32,.92);
-    backdrop-filter:blur(10px); padding:14px 16px 10px;
-    border-bottom:1px solid var(--line);
+    position:sticky; top:0; z-index:20; background:rgba(7,11,20,.8);
+    backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+    padding:16px 18px 12px; border-bottom:1px solid var(--line);
     display:flex; align-items:center; justify-content:space-between;
   }
-  .top h1{font-size:19px; font-weight:800}
-  .top h1 span{color:var(--acc)}
-  .chip{
-    background:var(--card2); border:1px solid var(--line); border-radius:20px;
-    padding:6px 12px; font-size:13px; font-weight:700; color:var(--grn);
+  .top h1{font-family:'Unbounded'; font-size:16px; font-weight:900; letter-spacing:.3px}
+  .top h1 span{
+    background:var(--grad); -webkit-background-clip:text; background-clip:text;
+    -webkit-text-fill-color:transparent;
   }
-  /* ---------- вкладки-экраны ---------- */
-  .page{display:none; padding:14px}
+  .chip{
+    display:flex; align-items:center; gap:8px;
+    background:var(--glass); border:1px solid var(--line); border-radius:22px;
+    padding:7px 14px; font-size:13px; font-weight:800; color:var(--grn);
+    box-shadow:0 0 24px rgba(0,214,143,.12);
+  }
+  .dot{
+    width:7px; height:7px; border-radius:50%; background:var(--grn);
+    box-shadow:0 0 8px var(--grn); animation:pulse 2s infinite;
+  }
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  /* ---------- экраны ---------- */
+  .page{display:none; padding:16px; animation:fadein .3s}
   .page.on{display:block}
-  /* ---------- ПРОДАЖ: сетка товаров ---------- */
-  .grid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+  @keyframes fadein{from{opacity:0; transform:translateY(6px)}to{opacity:1; transform:none}}
+  /* ---------- ПРОДАЖ ---------- */
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:11px}
   .pbtn{
-    background:var(--card); border:1px solid var(--line); border-radius:var(--r);
-    padding:14px 12px; cursor:pointer; text-align:left; color:var(--txt);
-    transition:transform .08s; position:relative; min-height:96px;
+    background:linear-gradient(160deg,var(--glass2),var(--glass));
+    border:1px solid var(--line); border-radius:var(--r);
+    padding:15px 13px; cursor:pointer; text-align:left; color:var(--txt);
+    transition:transform .1s, box-shadow .2s, border-color .2s;
+    position:relative; min-height:100px; overflow:hidden;
     display:flex; flex-direction:column; justify-content:space-between;
   }
-  .pbtn:active{transform:scale(.96)}
-  .pbtn .nm{font-size:15px; font-weight:700; line-height:1.25; word-break:break-word}
-  .pbtn .pr{font-size:17px; font-weight:800; color:var(--acc); margin-top:8px}
-  .pbtn .st{font-size:12px; color:var(--mut); margin-top:2px}
-  .pbtn.low .st{color:var(--yel); font-weight:700}
-  .pbtn.out{opacity:.45}
-  .empty{
-    text-align:center; color:var(--mut); padding:48px 20px; font-size:15px; line-height:1.6;
+  .pbtn::after{
+    content:''; position:absolute; inset:0 0 auto 0; height:1px;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.25),transparent);
   }
-  /* ---------- модалка продажи ---------- */
+  .pbtn:active{transform:scale(.95)}
+  .pbtn .nm{font-size:14.5px; font-weight:800; line-height:1.3; word-break:break-word}
+  .pbtn .pr{
+    font-family:'Unbounded'; font-size:15px; font-weight:700; margin-top:10px;
+    background:var(--grad); -webkit-background-clip:text; background-clip:text;
+    -webkit-text-fill-color:transparent;
+  }
+  .pbtn .st{font-size:11.5px; color:var(--mut); margin-top:3px; font-weight:700}
+  .pbtn.low{border-color:rgba(255,194,77,.4)}
+  .pbtn.low .st{color:var(--yel)}
+  .pbtn.out{opacity:.4}
+  .empty{
+    text-align:center; color:var(--mut); padding:50px 20px; font-size:14.5px;
+    line-height:1.7; font-weight:600;
+  }
+  /* ---------- модалки ---------- */
   .ov{
-    display:none; position:fixed; inset:0; background:rgba(0,0,0,.6);
-    z-index:50; align-items:flex-end; justify-content:center;
+    display:none; position:fixed; inset:0; background:rgba(3,5,10,.7);
+    backdrop-filter:blur(6px); z-index:50; align-items:flex-end; justify-content:center;
   }
   .ov.on{display:flex}
   .sheet{
-    background:var(--card); width:100%; max-width:480px;
-    border-radius:22px 22px 0 0; padding:20px 18px 26px;
-    border:1px solid var(--line); border-bottom:none;
+    background:linear-gradient(180deg,#131a2c,#0c1220);
+    width:100%; max-width:480px; border-radius:26px 26px 0 0;
+    padding:22px 20px 30px; border:1px solid var(--line); border-bottom:none;
+    animation:up .25s;
   }
-  .sheet h3{font-size:18px; font-weight:800; margin-bottom:4px}
-  .sheet .sub{color:var(--mut); font-size:13px; margin-bottom:16px}
-  .qty{
-    display:flex; align-items:center; justify-content:center; gap:18px; margin:10px 0 16px;
-  }
+  @keyframes up{from{transform:translateY(40px); opacity:0}to{transform:none; opacity:1}}
+  .sheet h3{font-family:'Unbounded'; font-size:16px; font-weight:700; margin-bottom:5px}
+  .sheet .sub{color:var(--mut); font-size:13px; margin-bottom:18px; font-weight:600}
+  .qty{display:flex; align-items:center; justify-content:center; gap:20px; margin:12px 0 16px}
   .qbtn{
-    width:52px; height:52px; border-radius:50%; border:1px solid var(--line);
-    background:var(--card2); color:var(--txt); font-size:26px; font-weight:700; cursor:pointer;
+    width:54px; height:54px; border-radius:50%; border:1px solid var(--line);
+    background:var(--glass2); color:var(--txt); font-size:26px; font-weight:700; cursor:pointer;
+    transition:transform .1s;
   }
-  .qbtn:active{transform:scale(.92)}
-  .qnum{font-size:34px; font-weight:800; min-width:64px; text-align:center}
-  .total{
-    text-align:center; font-size:15px; color:var(--mut); margin-bottom:16px;
+  .qbtn:active{transform:scale(.9)}
+  .qnum{font-family:'Unbounded'; font-size:32px; font-weight:900; min-width:70px; text-align:center}
+  .total{text-align:center; font-size:14px; color:var(--mut); margin-bottom:18px; font-weight:700}
+  .total b{
+    font-family:'Unbounded'; font-size:18px;
+    color:var(--grn); text-shadow:0 0 18px rgba(0,214,143,.4);
   }
-  .total b{color:var(--grn); font-size:19px}
   .row2{display:flex; gap:10px}
   .btn{
-    flex:1; padding:15px; border-radius:14px; border:none; font-size:16px;
-    font-weight:800; cursor:pointer; color:#fff;
+    flex:1; padding:16px; border-radius:15px; border:none; font-size:15px;
+    font-weight:800; cursor:pointer; color:#fff; font-family:'Manrope';
+    transition:transform .1s, box-shadow .2s;
   }
-  .btn.g{background:var(--grn)}
-  .btn.b{background:var(--acc)}
-  .btn.r{background:var(--red)}
-  .btn.gray{background:var(--card2); color:var(--mut); border:1px solid var(--line)}
+  .btn.g{background:var(--gradGrn); box-shadow:0 6px 24px rgba(0,214,143,.35)}
+  .btn.b{background:var(--grad); box-shadow:0 6px 24px rgba(108,140,255,.35)}
+  .btn.r{background:linear-gradient(135deg,#ff5c7a,#e0356b)}
+  .btn.gray{background:var(--glass2); color:var(--mut); border:1px solid var(--line); box-shadow:none}
   .btn:active{transform:scale(.97)}
   .btn:disabled{opacity:.5}
   /* ---------- ТОВАРИ ---------- */
   .item{
-    background:var(--card); border:1px solid var(--line); border-radius:var(--r);
-    padding:13px 14px; margin-bottom:10px; display:flex; align-items:center; gap:10px;
+    background:linear-gradient(160deg,var(--glass2),var(--glass));
+    border:1px solid var(--line); border-radius:var(--r);
+    padding:14px 15px; margin-bottom:10px; display:flex; align-items:center; gap:10px;
   }
   .item .info{flex:1; min-width:0}
-  .item .nm{font-size:15px; font-weight:700}
-  .item .meta{font-size:12.5px; color:var(--mut); margin-top:3px}
+  .item .nm{font-size:15px; font-weight:800}
+  .item .meta{font-size:12.5px; color:var(--mut); margin-top:4px; font-weight:600}
   .item .meta b{color:var(--txt)}
-  .item .meta .lw{color:var(--yel); font-weight:700}
+  .item .meta .lw{color:var(--yel); font-weight:800}
   .ico{
-    width:38px; height:38px; border-radius:10px; border:1px solid var(--line);
-    background:var(--card2); color:var(--txt); font-size:16px; cursor:pointer; flex:none;
+    width:40px; height:40px; border-radius:12px; border:1px solid var(--line);
+    background:var(--glass2); color:var(--txt); font-size:16px; cursor:pointer; flex:none;
   }
   .addbtn{
-    width:100%; padding:15px; border-radius:14px; border:1px dashed var(--acc);
-    background:transparent; color:var(--acc); font-size:15px; font-weight:800;
-    cursor:pointer; margin-bottom:14px;
+    width:100%; padding:16px; border-radius:15px; border:1px dashed rgba(108,140,255,.5);
+    background:rgba(108,140,255,.06); color:var(--acc); font-size:15px; font-weight:800;
+    cursor:pointer; margin-bottom:14px; font-family:'Manrope';
   }
-  /* ---------- форма товара ---------- */
-  .fld{margin-bottom:12px}
-  .fld label{display:block; font-size:12.5px; color:var(--mut); margin-bottom:6px; font-weight:700}
+  /* ---------- форма ---------- */
+  .fld{margin-bottom:13px}
+  .fld label{display:block; font-size:12px; color:var(--mut); margin-bottom:7px; font-weight:800; text-transform:uppercase; letter-spacing:.5px}
   .fld input{
-    width:100%; padding:13px 14px; border-radius:12px; border:1px solid var(--line);
-    background:var(--card2); color:var(--txt); font-size:16px; outline:none;
+    width:100%; padding:14px; border-radius:13px; border:1px solid var(--line);
+    background:rgba(255,255,255,.04); color:var(--txt); font-size:16px; outline:none;
+    font-family:'Manrope'; font-weight:700;
   }
-  .fld input:focus{border-color:var(--acc)}
+  .fld input:focus{border-color:var(--acc); box-shadow:0 0 0 3px rgba(108,140,255,.15)}
   .frow{display:flex; gap:10px}
   .frow .fld{flex:1}
-  /* ---------- СЬОГОДНІ ---------- */
-  .stats{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px}
+  /* ---------- карточки статистики ---------- */
+  .stats{display:grid; grid-template-columns:1fr 1fr; gap:11px; margin-bottom:16px}
   .scard{
-    background:var(--card); border:1px solid var(--line); border-radius:var(--r);
-    padding:14px;
+    background:linear-gradient(160deg,var(--glass2),var(--glass));
+    border:1px solid var(--line); border-radius:var(--r);
+    padding:16px 15px; position:relative; overflow:hidden;
   }
-  .scard .lbl{font-size:12px; color:var(--mut); font-weight:700; text-transform:uppercase; letter-spacing:.4px}
-  .scard .val{font-size:22px; font-weight:800; margin-top:6px}
-  .scard .val.g{color:var(--grn)}
-  .scard .val.b{color:var(--acc)}
-  h2.sec{font-size:15px; font-weight:800; margin:18px 0 10px; color:var(--mut)}
+  .scard::after{
+    content:''; position:absolute; inset:0 0 auto 0; height:1px;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.3),transparent);
+  }
+  .scard .lbl{
+    font-size:10.5px; color:var(--mut); font-weight:800;
+    text-transform:uppercase; letter-spacing:1px;
+  }
+  .scard .val{
+    font-family:'Unbounded'; font-size:19px; font-weight:900; margin-top:9px;
+    letter-spacing:.2px;
+  }
+  .scard .val.g{color:var(--grn); text-shadow:0 0 22px rgba(0,214,143,.35)}
+  .scard .val.b{
+    background:var(--grad); -webkit-background-clip:text; background-clip:text;
+    -webkit-text-fill-color:transparent;
+  }
+  h2.sec{
+    font-size:12px; font-weight:800; margin:20px 2px 11px; color:var(--mut);
+    text-transform:uppercase; letter-spacing:1.2px;
+  }
   .sale{
-    background:var(--card); border:1px solid var(--line); border-radius:14px;
-    padding:11px 14px; margin-bottom:8px; display:flex; justify-content:space-between;
-    align-items:center; font-size:14px;
+    background:linear-gradient(160deg,var(--glass2),var(--glass));
+    border:1px solid var(--line); border-radius:15px;
+    padding:12px 15px; margin-bottom:8px; display:flex; justify-content:space-between;
+    align-items:center; font-size:14px; font-weight:700;
   }
-  .sale .t{color:var(--mut); font-size:12px; margin-top:2px}
-  .sale .sum{font-weight:800; color:var(--grn); white-space:nowrap; margin-left:10px}
-  /* ---------- нижняя навигация ---------- */
+  .sale .t{color:var(--mut); font-size:11.5px; margin-top:3px; font-weight:600}
+  .sale .sum{
+    font-family:'Unbounded'; font-weight:700; font-size:13px; color:var(--grn);
+    white-space:nowrap; margin-left:10px;
+  }
+  /* ---------- ДИНАМІКА ---------- */
+  .periods{display:flex; gap:8px; margin-bottom:14px}
+  .pchip{
+    flex:1; padding:11px; border-radius:13px; border:1px solid var(--line);
+    background:var(--glass); color:var(--mut); font-size:13.5px; font-weight:800;
+    cursor:pointer; font-family:'Manrope'; transition:.2s;
+  }
+  .pchip.on{
+    background:var(--grad); border-color:transparent; color:#fff;
+    box-shadow:0 6px 22px rgba(108,140,255,.4);
+  }
+  .chart{
+    background:linear-gradient(160deg,var(--glass2),var(--glass));
+    border:1px solid var(--line); border-radius:var(--r);
+    padding:18px 14px 10px; margin-bottom:14px;
+  }
+  .bars{
+    display:flex; align-items:flex-end; gap:4px; height:170px;
+    overflow-x:auto; padding-bottom:4px;
+  }
+  .barcol{
+    flex:1; min-width:14px; display:flex; flex-direction:column;
+    align-items:center; justify-content:flex-end; height:100%; cursor:pointer;
+  }
+  .bar{
+    width:100%; border-radius:6px 6px 2px 2px;
+    background:linear-gradient(180deg,rgba(108,140,255,.95),rgba(160,107,255,.55));
+    min-height:3px; height:3px;
+    transition:height .6s cubic-bezier(.2,.8,.2,1), box-shadow .2s;
+  }
+  .bar.max{
+    background:var(--gradGrn);
+    box-shadow:0 0 18px rgba(0,214,143,.5);
+  }
+  .barcol:active .bar{box-shadow:0 0 16px rgba(108,140,255,.6)}
+  .barcol .bl{font-size:9px; color:var(--mut); margin-top:6px; white-space:nowrap; font-weight:700}
+  .chartinfo{
+    text-align:center; font-size:12.5px; color:var(--mut);
+    padding:10px 0 6px; min-height:34px; font-weight:700;
+  }
+  .chartinfo b{font-family:'Unbounded'; font-size:13px; color:var(--grn)}
+  /* ---------- навигация ---------- */
   .nav{
     position:fixed; bottom:0; left:0; right:0; z-index:30;
-    background:rgba(15,20,32,.95); backdrop-filter:blur(10px);
+    background:rgba(7,11,20,.85); backdrop-filter:blur(18px);
+    -webkit-backdrop-filter:blur(18px);
     border-top:1px solid var(--line); display:flex;
-    padding:8px 6px calc(10px + env(safe-area-inset-bottom));
+    padding:9px 6px calc(11px + env(safe-area-inset-bottom));
   }
   .nav button{
     flex:1; background:none; border:none; color:var(--mut); cursor:pointer;
-    font-size:11.5px; font-weight:700; display:flex; flex-direction:column;
-    align-items:center; gap:3px; padding:4px 0;
+    font-size:10.5px; font-weight:800; display:flex; flex-direction:column;
+    align-items:center; gap:4px; padding:4px 0; font-family:'Manrope';
+    transition:color .2s;
   }
-  .nav button .i{font-size:21px}
-  .nav button.on{color:var(--acc)}
+  .nav button .i{font-size:21px; filter:grayscale(.6) opacity(.7); transition:.2s}
+  .nav button.on{color:var(--txt)}
+  .nav button.on .i{filter:none; transform:translateY(-1px)}
   /* ---------- тост ---------- */
   #toast{
     position:fixed; left:50%; transform:translateX(-50%) translateY(20px);
-    bottom:96px; background:var(--card2); border:1px solid var(--line);
-    color:var(--txt); padding:12px 20px; border-radius:14px; font-size:14px;
-    font-weight:700; opacity:0; transition:.25s; z-index:99; pointer-events:none;
-    max-width:88%; text-align:center;
+    bottom:100px; background:rgba(19,26,44,.95); border:1px solid var(--line);
+    color:var(--txt); padding:13px 22px; border-radius:16px; font-size:14px;
+    font-weight:800; opacity:0; transition:.25s; z-index:99; pointer-events:none;
+    max-width:88%; text-align:center; backdrop-filter:blur(10px);
+    box-shadow:0 10px 40px rgba(0,0,0,.5);
   }
   #toast.on{opacity:1; transform:translateX(-50%) translateY(0)}
-  .spin{
-    text-align:center; padding:40px; color:var(--mut); font-size:14px;
+  .spin{text-align:center; padding:40px; color:var(--mut); font-size:14px; font-weight:700}
+  @media (prefers-reduced-motion: reduce){
+    *{animation:none !important; transition:none !important}
   }
 </style>
 </head>
@@ -167,8 +280,8 @@
 
 <!-- Шапка -->
 <div class="top">
-  <h1>🛒 Продавець <span>AI</span></h1>
-  <div class="chip" id="topRevenue">₴ 0</div>
+  <h1>🛒 ПРОДАВЕЦЬ <span>AI</span></h1>
+  <div class="chip"><span class="dot"></span><span class="num" id="topRevenue">₴ 0</span></div>
 </div>
 
 <!-- ЭКРАН: ПРОДАЖ -->
@@ -185,13 +298,32 @@
 <!-- ЭКРАН: СЬОГОДНІ -->
 <div class="page" id="pageToday">
   <div class="stats">
-    <div class="scard"><div class="lbl">Виторг</div><div class="val g" id="stRev">₴ 0</div></div>
-    <div class="scard"><div class="lbl">Прибуток</div><div class="val b" id="stProfit">₴ 0</div></div>
-    <div class="scard"><div class="lbl">Продажів</div><div class="val" id="stCount">0</div></div>
-    <div class="scard"><div class="lbl">Середній чек</div><div class="val" id="stAvg">₴ 0</div></div>
+    <div class="scard"><div class="lbl">Виторг</div><div class="val g num" id="stRev">₴ 0</div></div>
+    <div class="scard"><div class="lbl">Прибуток</div><div class="val b num" id="stProfit">₴ 0</div></div>
+    <div class="scard"><div class="lbl">Продажів</div><div class="val num" id="stCount">0</div></div>
+    <div class="scard"><div class="lbl">Середній чек</div><div class="val num" id="stAvg">₴ 0</div></div>
   </div>
   <h2 class="sec">Останні продажі</h2>
   <div id="salesFeed"><div class="spin">Завантаження…</div></div>
+</div>
+
+<!-- ЭКРАН: ДИНАМІКА -->
+<div class="page" id="pageChart">
+  <div class="periods">
+    <button class="pchip on" id="pc7"   onclick="setPeriod(7)">7 днів</button>
+    <button class="pchip"    id="pc30"  onclick="setPeriod(30)">30 днів</button>
+    <button class="pchip"    id="pc365" onclick="setPeriod(365)">Рік</button>
+  </div>
+  <div class="stats">
+    <div class="scard"><div class="lbl">Виторг за період</div><div class="val g num" id="rgRev">₴ 0</div></div>
+    <div class="scard"><div class="lbl">Прибуток</div><div class="val b num" id="rgProfit">₴ 0</div></div>
+    <div class="scard"><div class="lbl">Продажів</div><div class="val num" id="rgCount">0</div></div>
+    <div class="scard"><div class="lbl">Кращий день</div><div class="val num" id="rgBest" style="font-size:15px">—</div></div>
+  </div>
+  <div class="chart">
+    <div class="bars" id="bars"><div class="spin" style="width:100%">Завантаження…</div></div>
+    <div class="chartinfo" id="chartInfo">Тапни на стовпчик, щоб побачити день</div>
+  </div>
 </div>
 
 <!-- Модалка: продажа -->
@@ -258,6 +390,7 @@
   <button class="on" id="nb0" onclick="go(0)"><span class="i">🛒</span>Продаж</button>
   <button id="nb1" onclick="go(1)"><span class="i">📦</span>Товари</button>
   <button id="nb2" onclick="go(2)"><span class="i">📊</span>Сьогодні</button>
+  <button id="nb3" onclick="go(3)"><span class="i">📈</span>Динаміка</button>
 </div>
 
 <script>
@@ -267,13 +400,28 @@ const API = 'https://prodavets-ai-production.up.railway.app';
 const tg = window.Telegram && window.Telegram.WebApp;
 if (tg) { try { tg.ready(); tg.expand(); } catch(e){} }
 
-let products = [];      // кэш товаров
-let saleProd = null;    // товар в модалке продажи
+let products = [];
+let saleProd = null;
 let saleQty  = 1;
-let editId   = null;    // id товара в форме (null = новый)
+let editId   = null;
 
 const $ = id => document.getElementById(id);
 const uah = n => '₴ ' + (Math.round(n * 100) / 100).toLocaleString('uk-UA');
+
+// анимация «набегающих» цифр
+function animNum(el, target, money){
+  const dur = 700, t0 = performance.now();
+  const from = el._v || 0;
+  el._v = target;
+  function tick(t){
+    const k = Math.min(1, (t - t0) / dur);
+    const e = 1 - Math.pow(1 - k, 3); // ease-out cubic
+    const v = from + (target - from) * e;
+    el.textContent = money ? uah(v) : Math.round(v);
+    if (k < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
 
 function toast(msg){
   const t = $('toast');
@@ -284,7 +432,7 @@ function toast(msg){
 }
 
 // ---------- навигация ----------
-const pages = ['pageSale', 'pageProducts', 'pageToday'];
+const pages = ['pageSale', 'pageProducts', 'pageToday', 'pageChart'];
 function go(i){
   pages.forEach((p, k) => {
     $(p).classList.toggle('on', k === i);
@@ -292,9 +440,10 @@ function go(i){
   });
   if (i === 0 || i === 1) loadProducts();
   if (i === 2) loadToday();
+  if (i === 3) loadRange(curPeriod);
 }
 
-// ---------- загрузка товаров ----------
+// ---------- товары ----------
 async function loadProducts(){
   try{
     const r = await fetch(API + '/products');
@@ -456,15 +605,15 @@ async function delProduct(){
   }
 }
 
-// ---------- статистика ----------
+// ---------- сьогодні ----------
 async function loadToday(){
   try{
     const r = await fetch(API + '/stats/today');
     const s = await r.json();
-    $('stRev').textContent    = uah(s.revenue || 0);
-    $('stProfit').textContent = uah(s.profit  || 0);
-    $('stCount').textContent  = s.sales_count || 0;
-    $('stAvg').textContent    = uah(s.sales_count ? s.revenue / s.sales_count : 0);
+    animNum($('stRev'),    s.revenue || 0, true);
+    animNum($('stProfit'), s.profit  || 0, true);
+    animNum($('stCount'),  s.sales_count || 0, false);
+    animNum($('stAvg'),    s.sales_count ? s.revenue / s.sales_count : 0, true);
   }catch(e){}
   try{
     const r = await fetch(API + '/sales/recent');
@@ -491,8 +640,70 @@ async function loadTopRevenue(){
   try{
     const r = await fetch(API + '/stats/today');
     const s = await r.json();
-    $('topRevenue').textContent = uah(s.revenue || 0);
+    animNum($('topRevenue'), s.revenue || 0, true);
   }catch(e){}
+}
+
+// ---------- динаміка ----------
+let curPeriod = 7;
+
+function setPeriod(d){
+  curPeriod = d;
+  [7, 30, 365].forEach(p => $('pc' + p).classList.toggle('on', p === d));
+  loadRange(d);
+}
+
+async function loadRange(days){
+  const w = $('bars');
+  w.innerHTML = '<div class="spin" style="width:100%">Завантаження…</div>';
+  try{
+    const r = await fetch(API + '/stats/range?days=' + days);
+    const list = await r.json();
+
+    let rev = 0, prof = 0, cnt = 0, best = null;
+    list.forEach(d => {
+      rev += d.revenue; prof += d.profit; cnt += d.sales_count;
+      if (!best || d.revenue > best.revenue) best = d;
+    });
+    animNum($('rgRev'),    rev,  true);
+    animNum($('rgProfit'), prof, true);
+    animNum($('rgCount'),  cnt,  false);
+    $('rgBest').textContent = best && best.revenue > 0 ? best.day : '—';
+
+    if (!list.length || (rev === 0 && cnt === 0)){
+      w.innerHTML = '<div class="empty" style="width:100%; padding:30px 10px">За цей період продажів не було 💤</div>';
+      $('chartInfo').textContent = '';
+      return;
+    }
+
+    const max = Math.max(...list.map(d => d.revenue), 1);
+    w.innerHTML = '';
+    const labelStep = list.length > 40 ? Math.ceil(list.length / 12) : (list.length > 12 ? 2 : 1);
+    const heights = [];
+    list.forEach((d, i) => {
+      const col = document.createElement('div');
+      col.className = 'barcol';
+      const h = Math.max(3, Math.round(d.revenue / max * 148));
+      heights.push(h);
+      col.innerHTML =
+        '<div class="bar' + (d.revenue === max && d.revenue > 0 ? ' max' : '') + '"></div>' +
+        '<div class="bl">' + (i % labelStep === 0 ? d.day.slice(0, 5) : '') + '</div>';
+      col.onclick = () => {
+        $('chartInfo').innerHTML = d.day + ': <b>' + uah(d.revenue) +
+          '</b> · прибуток ' + uah(d.profit) + ' · продажів ' + d.sales_count;
+      };
+      w.appendChild(col);
+    });
+    // бары «вырастают» после вставки в DOM
+    requestAnimationFrame(() => {
+      w.querySelectorAll('.bar').forEach((b, i) => {
+        b.style.height = heights[i] + 'px';
+      });
+    });
+    $('chartInfo').textContent = 'Тапни на стовпчик, щоб побачити день';
+  }catch(e){
+    w.innerHTML = '<div class="empty" style="width:100%">Не вдалося завантажити 😔</div>';
+  }
 }
 
 // ---------- старт ----------
