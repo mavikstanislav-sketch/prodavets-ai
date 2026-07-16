@@ -112,6 +112,8 @@ async def startup():
         """)
         # НОВОЕ: фото товара (добавляем колонку, если её ещё нет)
         await con.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS img TEXT;")
+        # НОВОЕ: штрих-код товара
+        await con.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS barcode TEXT;")
         # НОВОЕ: служебное состояние (дата последнего утреннего отчёта и т.п.)
         await con.execute("""
             CREATE TABLE IF NOT EXISTS app_state (
@@ -144,6 +146,7 @@ class ProductIn(BaseModel):
     stock: int = 0
     min_stock: int = 3
     img: Optional[str] = None  # фото товара (сжатая data:image строка)
+    barcode: Optional[str] = None  # штрих-код (EAN и т.п.)
 
 
 class SaleIn(BaseModel):
@@ -193,6 +196,7 @@ async def list_products():
             "stock": r["stock"],
             "min_stock": r["min_stock"],
             "img": r["img"],
+            "barcode": r["barcode"],
             "low": r["stock"] <= r["min_stock"],
         }
         for r in rows
@@ -207,26 +211,28 @@ async def add_product(p: ProductIn):
         raise HTTPException(400, "Название не может быть пустым")
     if p.img and len(p.img) > 400000:
         raise HTTPException(400, "Фото завелике, спробуй інше")
+    barcode = (p.barcode or "").strip() or None
     async with pool.acquire() as con:
         row = await con.fetchrow(
-            """INSERT INTO products (name, buy_price, sell_price, stock, min_stock, img)
-               VALUES ($1, $2, $3, $4, $5, $6) RETURNING id;""",
-            name, p.buy_price, p.sell_price, p.stock, p.min_stock, p.img,
+            """INSERT INTO products (name, buy_price, sell_price, stock, min_stock, img, barcode)
+               VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id;""",
+            name, p.buy_price, p.sell_price, p.stock, p.min_stock, p.img, barcode,
         )
     return {"ok": True, "id": row["id"]}
 
 
 @app.put("/products/{product_id}")
 async def update_product(product_id: int, p: ProductIn):
-    """Изменить товар (название, цены, остаток, порог, фото)."""
+    """Изменить товар (название, цены, остаток, порог, фото, штрих-код)."""
     if p.img and len(p.img) > 400000:
         raise HTTPException(400, "Фото завелике, спробуй інше")
+    barcode = (p.barcode or "").strip() or None
     async with pool.acquire() as con:
         result = await con.execute(
             """UPDATE products
-               SET name=$1, buy_price=$2, sell_price=$3, stock=$4, min_stock=$5, img=$6
-               WHERE id=$7;""",
-            p.name.strip(), p.buy_price, p.sell_price, p.stock, p.min_stock, p.img,
+               SET name=$1, buy_price=$2, sell_price=$3, stock=$4, min_stock=$5, img=$6, barcode=$7
+               WHERE id=$8;""",
+            p.name.strip(), p.buy_price, p.sell_price, p.stock, p.min_stock, p.img, barcode,
             product_id,
         )
     if result == "UPDATE 0":
@@ -1326,6 +1332,7 @@ async def product_card(product_id: int):
         "stock": p["stock"],
         "min_stock": p["min_stock"],
         "img": p["img"],
+        "barcode": p["barcode"],
         "low": p["stock"] <= p["min_stock"],
         "today": today_s,
         "month": month_s,
