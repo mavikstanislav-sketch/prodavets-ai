@@ -6,6 +6,7 @@
 <title>Продавець AI</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Unbounded:wght@700;900&display=swap&subset=cyrillic" rel="stylesheet">
@@ -451,6 +452,7 @@
 
 <!-- ЭКРАН: ПРОДАЖ -->
 <div class="page on" id="pageSale">
+  <button class="scanbtn" onclick="openQr('sale')">📷 Сканувати штрих-код</button>
   <div class="grid" id="saleGrid"><div class="spin">Завантаження…</div></div>
 </div>
 
@@ -575,6 +577,13 @@
         <input id="fMin" type="number" inputmode="numeric" placeholder="3">
       </div>
     </div>
+    <div class="fld">
+      <label>Штрих-код (не обов'язково)</label>
+      <div style="display:flex; gap:8px">
+        <input id="fBarcode" inputmode="numeric" placeholder="4820000000000" style="flex:1; width:auto">
+        <button class="ico" style="width:50px; height:auto" onclick="openQr('form')" title="Сканувати">📷</button>
+      </div>
+    </div>
     <div class="row2" style="margin-top:6px">
       <button class="btn gray" onclick="closeForm()">Скасувати</button>
       <button class="btn b" id="mfBtn" onclick="saveProduct()">💾 Зберегти</button>
@@ -667,6 +676,28 @@
     <input type="file" id="impFileP" accept="image/*" capture="environment" style="display:none" onchange="impPick(this)">
     <div class="row2" id="impBtns" style="margin-top:12px">
       <button class="btn gray" onclick="closeImp()">Закрити</button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка: СКАНЕР ШТРИХ-КОДІВ [НОВОЕ] -->
+<div class="ov" id="ovQr" onclick="if(event.target===this)closeQr()">
+  <div class="sheet">
+    <h3>📷 Сканер штрих-кодів</h3>
+    <div class="sub" id="qrStatus">Наведи камеру на штрих-код товару…</div>
+    <div id="qrReader" style="width:100%; border-radius:14px; overflow:hidden; background:#000; min-height:230px"></div>
+    <div id="qrBind" style="display:none; margin-top:12px">
+      <div class="fld">
+        <label>Прив'язати код до товару</label>
+        <select id="qrBindSel"></select>
+      </div>
+      <div class="row2">
+        <button class="btn b" onclick="bindCode()">🔗 Прив'язати</button>
+        <button class="btn gray" onclick="resumeQr()">↩️ Сканувати далі</button>
+      </div>
+    </div>
+    <div class="row2" style="margin-top:12px">
+      <button class="btn gray" style="width:100%" onclick="closeQr()">Закрити</button>
     </div>
   </div>
 </div>
@@ -1344,6 +1375,136 @@ async function confirmScan(){
   }catch(e){
     toast('❌ ' + e.message);
     if (btn) btn.disabled = false;
+  }
+}
+
+// ---------- СКАНЕР ШТРИХ-КОДІВ [НОВОЕ] ----------
+let qrObj = null;
+let qrMode = 'sale';   // 'sale' — пробить продажу, 'form' — вписать код в форму товара
+let qrBusy = false;
+let qrLastCode = '';
+
+function openQr(mode){
+  qrMode = mode || 'sale';
+  qrBusy = false;
+  $('qrBind').style.display = 'none';
+  $('qrStatus').textContent = 'Наведи камеру на штрих-код товару…';
+  $('ovQr').classList.add('on');
+  startQr();
+}
+
+async function startQr(){
+  if (typeof Html5Qrcode === 'undefined'){
+    $('qrStatus').textContent = 'Бібліотека сканера не завантажилась — онови сторінку';
+    return;
+  }
+  try{
+    await stopQr();
+    let formats;
+    try{
+      formats = [
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.QR_CODE
+      ];
+    }catch(e){ formats = undefined; }
+    qrObj = new Html5Qrcode('qrReader', formats ? { formatsToSupport: formats } : undefined);
+    await qrObj.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 250, height: 150 } },
+      onQrScan,
+      () => {}
+    );
+  }catch(e){
+    $('qrStatus').textContent = 'Немає доступу до камери 😕 Дозволь Telegram користуватись камерою в налаштуваннях телефону';
+  }
+}
+
+async function stopQr(){
+  if (qrObj){
+    try{ await qrObj.stop(); qrObj.clear(); }catch(e){}
+    qrObj = null;
+  }
+}
+
+function closeQr(){
+  stopQr();
+  $('ovQr').classList.remove('on');
+  qrBusy = false;
+}
+
+function onQrScan(code){
+  if (qrBusy) return;
+  qrBusy = true;
+  code = String(code || '').trim();
+  if (!code){ qrBusy = false; return; }
+  if (tg && tg.HapticFeedback){ try{ tg.HapticFeedback.impactOccurred('medium'); }catch(e){} }
+  // Режим формы: просто вписываем код в поле
+  if (qrMode === 'form'){
+    const f = $('fBarcode');
+    if (f) f.value = code;
+    closeQr();
+    toast('✅ Код зчитано: ' + code);
+    return;
+  }
+  // Режим кассы: ищем товар по коду
+  const p = products.find(x => x.barcode && String(x.barcode) === code);
+  if (p){
+    closeQr();
+    openSale(p);
+  } else {
+    showBind(code);
+  }
+}
+
+function showBind(code){
+  stopQr();
+  qrLastCode = code;
+  $('qrStatus').innerHTML = 'Код <b>' + esc(code) + '</b> ще не прив\'язаний до товару.';
+  const sel = $('qrBindSel');
+  sel.innerHTML = '';
+  products.forEach(p => {
+    const o = document.createElement('option');
+    o.value = p.id;
+    o.textContent = p.name + (p.barcode ? ' (вже має код)' : '');
+    sel.appendChild(o);
+  });
+  $('qrBind').style.display = 'block';
+}
+
+function resumeQr(){
+  $('qrBind').style.display = 'none';
+  $('qrStatus').textContent = 'Наведи камеру на штрих-код товару…';
+  qrBusy = false;
+  startQr();
+}
+
+async function bindCode(){
+  const pid = parseInt($('qrBindSel').value);
+  const p = products.find(x => x.id === pid);
+  if (!p){ toast('Обери товар'); return; }
+  try{
+    const r = await fetch(API + '/products/' + p.id, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name: p.name, buy_price: p.buy_price, sell_price: p.sell_price,
+        stock: p.stock, min_stock: p.min_stock, img: p.img || null,
+        barcode: qrLastCode
+      })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Помилка');
+    p.barcode = qrLastCode;
+    toast('🔗 Код прив\'язано до: ' + p.name);
+    closeQr();
+    openSale(p);
+    loadProducts();
+  }catch(e){
+    toast('❌ ' + e.message);
   }
 }
 
