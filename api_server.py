@@ -11,6 +11,7 @@
 #   - AI-советник (видит и недостачи)
 # ============================================================
 
+import asyncio
 import json
 import os
 import random
@@ -24,6 +25,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+
+# AI-директор: бот пишет владельцу сам (задай обе переменные в Railway)
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID", "").strip()
 
 app = FastAPI(title="Продавець AI")
 
@@ -107,7 +112,20 @@ async def startup():
         """)
         # НОВОЕ: фото товара (добавляем колонку, если её ещё нет)
         await con.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS img TEXT;")
+        # НОВОЕ: служебное состояние (дата последнего утреннего отчёта и т.п.)
+        await con.execute("""
+            CREATE TABLE IF NOT EXISTS app_state (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+        """)
+        # НОВОЕ: флаг "уже предупреждали, что товар заканчивается"
+        await con.execute(
+            "ALTER TABLE products ADD COLUMN IF NOT EXISTS low_notified BOOLEAN DEFAULT FALSE;"
+        )
     print("База готова: products, sales, receipts, inventory_checks на месте")
+    # НОВОЕ: запускаем фоновый цикл AI-директора (утренний отчёт + тревоги)
+    asyncio.create_task(director_loop())
 
 
 @app.on_event("shutdown")
@@ -393,6 +411,16 @@ async def inventory_check(inv: InventoryIn):
     shortages = [r for r in results if r["diff"] < 0]
     surplus = [r for r in results if r["diff"] > 0]
     total_loss = round(sum(r["loss"] for r in shortages), 2)
+    # AI-директор: мгновенно сообщаем владельцу о недостаче в Telegram
+    if shortages:
+        lines = "\n".join(
+            "• " + r["name"] + ": −" + str(-r["diff"]) + " шт (₴" + str(r["loss"]) + ")"
+            for r in shortages[:15]
+        )
+        asyncio.create_task(tg_send(
+            "😱 <b>Звірка виявила недостачу!</b>\n" + lines +
+            "\n\n💸 Втрати: <b>₴" + str(total_loss) + "</b> (за цінами продажу)"
+        ))
     return {
         "ok": True,
         "checked": len(results),
@@ -1072,6 +1100,175 @@ async def bulk_products(b: BulkProductsIn):
             existing.add(name.lower())
             created += 1
     return {"ok": True, "created": created, "skipped": skipped}
+
+
+# ------------------------------------------------------------
+#  AI-ДИРЕКТОР: сам пишет владельцу в Telegram  [НОВОЕ]
+#  - утренний AI-отчёт за вчера (раз в день, после 8:00 Киева)
+#  - тревога "заканчивается товар" (проверка каждые 5 минут)
+#  - тревога о недостаче уходит сразу из /inventory/check
+#  Нужны переменные в Railway: TELEGRAM_BOT_TOKEN, OWNER_CHAT_ID
+# ------------------------------------------------------------
+async def tg_send(text: str):
+    """Отправляет сообщение владельцу в Telegram. Молча пропускает, если не настроено."""
+    if not TELEGRAM_BOT_TOKEN or not OWNER_CHAT_ID:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            await client.post(
+                "https://api.telegram.org/bot" + TELEGRAM_BOT_TOKEN + "/sendMessage",
+                json={"chat_id": OWNER_CHAT_ID, "text": text[:4000], "parse_mode": "HTML"},
+            )
+    except Exception as e:
+        print("tg_send error:", str(e)[:200])
+
+
+async def check_low_stock():
+    """Тревога: товар опустился до минимума. Пишем один раз, пока не пополнят."""
+    if not TELEGRAM_BOT_TOKEN or not OWNER_CHAT_ID:
+        return
+    async with pool.acquire() as con:
+        rows = await con.fetch(
+            """SELECT id, name, stock, min_stock FROM products
+               WHERE stock <= min_stock AND COALESCE(low_notified, FALSE) = FALSE
+               ORDER BY stock;"""
+        )
+        if rows:
+            lines = "\n".join(
+                "• " + r["name"] + ": залишилось " + str(r["stock"]) + " шт"
+                + (" ❗️" if r["stock"] <= 0 else "")
+                for r in rows[:15]
+            )
+            await tg_send("⚠️ <b>Закінчується товар:</b>\n" + lines +
+                          "\n\n🚚 Час робити закупку!")
+            await con.execute(
+                "UPDATE products SET low_notified = TRUE WHERE id = ANY($1::int[]);",
+                [r["id"] for r in rows],
+            )
+        # Пополнили — сбрасываем флаг, чтобы в следующий раз снова предупредить
+        await con.execute(
+            "UPDATE products SET low_notified = FALSE WHERE stock > min_stock AND low_notified = TRUE;"
+        )
+
+
+async def maybe_daily_report():
+    """Утренний отчёт за вчера — один раз в день, после 8:00 по Киеву."""
+    if not TELEGRAM_BOT_TOKEN or not OWNER_CHAT_ID:
+        return
+    now = datetime.now(KYIV)
+    if now.hour < 8:
+        return
+    today_key = now.strftime("%Y-%m-%d")
+    async with pool.acquire() as con:
+        row = await con.fetchrow("SELECT value FROM app_state WHERE key = 'last_report';")
+        if row and row["value"] == today_key:
+            return
+        await con.execute(
+            """INSERT INTO app_state (key, value) VALUES ('last_report', $1)
+               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;""",
+            today_key,
+        )
+        # Данные за вчера
+        y_start = (now - timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ).astimezone(timezone.utc)
+        y_end = now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        day = await con.fetchrow(
+            """SELECT COALESCE(SUM(sell_price*qty),0) AS revenue,
+                      COALESCE(SUM((sell_price-buy_price)*qty),0) AS profit,
+                      COUNT(*) AS cnt
+               FROM sales WHERE sold_at >= $1 AND sold_at < $2;""",
+            y_start, y_end,
+        )
+        top = await con.fetch(
+            """SELECT p.name, SUM(s.qty) AS qty, SUM(s.sell_price*s.qty) AS revenue
+               FROM sales s JOIN products p ON p.id = s.product_id
+               WHERE s.sold_at >= $1 AND s.sold_at < $2
+               GROUP BY p.name ORDER BY revenue DESC LIMIT 5;""",
+            y_start, y_end,
+        )
+        low = await con.fetch(
+            "SELECT name, stock FROM products WHERE stock <= min_stock ORDER BY stock LIMIT 10;"
+        )
+        shorts = await con.fetch(
+            """SELECT p.name, SUM(c.diff) AS diff
+               FROM inventory_checks c JOIN products p ON p.id = c.product_id
+               WHERE c.checked_at >= $1 AND c.diff < 0
+               GROUP BY p.name LIMIT 10;""",
+            y_start,
+        )
+
+    data_lines = ["ВЧОРА: виторг " + str(round(float(day["revenue"]), 2)) + " грн, "
+                  "прибуток " + str(round(float(day["profit"]), 2)) + " грн, "
+                  "продажів " + str(day["cnt"])]
+    if top:
+        data_lines.append("ТОП: " + "; ".join(
+            r["name"] + " (" + str(r["qty"]) + " шт, " + str(round(float(r["revenue"]), 2)) + " грн)"
+            for r in top))
+    if low:
+        data_lines.append("ЗАКІНЧУЄТЬСЯ: " + "; ".join(
+            r["name"] + " (" + str(r["stock"]) + " шт)" for r in low))
+    if shorts:
+        data_lines.append("НЕДОСТАЧІ ЗА ДОБУ: " + "; ".join(
+            r["name"] + " (" + str(abs(int(r["diff"]))) + " шт)" for r in shorts))
+    data_text = "\n".join(data_lines)
+
+    # Просим Claude оформить живой отчёт; если AI недоступен — шлём цифры как есть
+    report = None
+    if ANTHROPIC_API_KEY:
+        try:
+            payload = {
+                "model": "claude-sonnet-5",
+                "max_tokens": 500,
+                "messages": [{"role": "user", "content":
+                    "Ти — AI-директор невеликого магазину. Ось дані за вчора:\n\n" + data_text +
+                    "\n\nНапиши власнику короткий ранковий звіт українською: 5-8 рядків, "
+                    "з емодзі, по-дружньому але по суті. Обов'язково: цифри дня, топ товарів, "
+                    "що докупити, і якщо є недостачі — зверни увагу. "
+                    "Пиши звичайним текстом без markdown (без ** і #)."}],
+            }
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": ANTHROPIC_API_KEY,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json=payload,
+                )
+            if resp.status_code == 200:
+                report = extract_text(resp.json())
+        except Exception as e:
+            print("daily report AI error:", str(e)[:200])
+    if not report:
+        report = "☀️ Ранковий звіт\n" + data_text
+    await tg_send("🤖 <b>AI-директор · ранковий звіт</b>\n\n" + report)
+
+
+async def director_loop():
+    """Фоновый цикл: каждые 5 минут проверяет остатки и время утреннего отчёта."""
+    await asyncio.sleep(15)  # даём серверу спокойно стартовать
+    print("AI-директор запущен" if (TELEGRAM_BOT_TOKEN and OWNER_CHAT_ID)
+          else "AI-директор спит: не заданы TELEGRAM_BOT_TOKEN / OWNER_CHAT_ID")
+    while True:
+        try:
+            if pool:
+                await check_low_stock()
+                await maybe_daily_report()
+        except Exception as e:
+            print("director_loop error:", str(e)[:200])
+        await asyncio.sleep(300)
+
+
+@app.get("/director/test")
+async def director_test():
+    """Проверка связи: открой в браузере — владельцу придёт тестовое сообщение."""
+    if not TELEGRAM_BOT_TOKEN or not OWNER_CHAT_ID:
+        return {"ok": False, "message": "Задай TELEGRAM_BOT_TOKEN і OWNER_CHAT_ID у Railway"}
+    await tg_send("🤖 <b>AI-директор на зв'язку!</b>\nТепер я сам писатиму тобі: "
+                  "ранковий звіт о 8:00, тривоги про залишки та недостачі.")
+    return {"ok": True, "message": "Повідомлення надіслано! Перевір Telegram."}
 
 
 # ------------------------------------------------------------
