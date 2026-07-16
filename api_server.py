@@ -103,6 +103,8 @@ async def startup():
                 checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
         """)
+        # НОВОЕ: фото товара (добавляем колонку, если её ещё нет)
+        await con.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS img TEXT;")
     print("База готова: products, sales, receipts, inventory_checks на месте")
 
 
@@ -121,6 +123,7 @@ class ProductIn(BaseModel):
     sell_price: float = 0
     stock: int = 0
     min_stock: int = 3
+    img: Optional[str] = None  # фото товара (сжатая data:image строка)
 
 
 class SaleIn(BaseModel):
@@ -169,6 +172,7 @@ async def list_products():
             "sell_price": float(r["sell_price"]),
             "stock": r["stock"],
             "min_stock": r["min_stock"],
+            "img": r["img"],
             "low": r["stock"] <= r["min_stock"],
         }
         for r in rows
@@ -181,24 +185,28 @@ async def add_product(p: ProductIn):
     name = p.name.strip()
     if not name:
         raise HTTPException(400, "Название не может быть пустым")
+    if p.img and len(p.img) > 400000:
+        raise HTTPException(400, "Фото завелике, спробуй інше")
     async with pool.acquire() as con:
         row = await con.fetchrow(
-            """INSERT INTO products (name, buy_price, sell_price, stock, min_stock)
-               VALUES ($1, $2, $3, $4, $5) RETURNING id;""",
-            name, p.buy_price, p.sell_price, p.stock, p.min_stock,
+            """INSERT INTO products (name, buy_price, sell_price, stock, min_stock, img)
+               VALUES ($1, $2, $3, $4, $5, $6) RETURNING id;""",
+            name, p.buy_price, p.sell_price, p.stock, p.min_stock, p.img,
         )
     return {"ok": True, "id": row["id"]}
 
 
 @app.put("/products/{product_id}")
 async def update_product(product_id: int, p: ProductIn):
-    """Изменить товар (название, цены, остаток, порог)."""
+    """Изменить товар (название, цены, остаток, порог, фото)."""
+    if p.img and len(p.img) > 400000:
+        raise HTTPException(400, "Фото завелике, спробуй інше")
     async with pool.acquire() as con:
         result = await con.execute(
             """UPDATE products
-               SET name=$1, buy_price=$2, sell_price=$3, stock=$4, min_stock=$5
-               WHERE id=$6;""",
-            p.name.strip(), p.buy_price, p.sell_price, p.stock, p.min_stock,
+               SET name=$1, buy_price=$2, sell_price=$3, stock=$4, min_stock=$5, img=$6
+               WHERE id=$7;""",
+            p.name.strip(), p.buy_price, p.sell_price, p.stock, p.min_stock, p.img,
             product_id,
         )
     if result == "UPDATE 0":
@@ -793,6 +801,7 @@ async def product_card(product_id: int):
         "sell_price": float(p["sell_price"]),
         "stock": p["stock"],
         "min_stock": p["min_stock"],
+        "img": p["img"],
         "low": p["stock"] <= p["min_stock"],
         "today": today_s,
         "month": month_s,
