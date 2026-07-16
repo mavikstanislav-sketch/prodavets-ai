@@ -59,6 +59,14 @@
     box-shadow:0 0 8px var(--grn); animation:pulse 2s infinite;
   }
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .topright{display:flex; align-items:center; gap:8px}
+  .winbtns{display:none; gap:6px}
+  .winbtn{
+    width:34px; height:34px; border-radius:11px; border:1px solid var(--line);
+    background:var(--glass); color:var(--mut); font-size:15px; cursor:pointer;
+    font-family:'Manrope'; transition:transform .1s, color .15s;
+  }
+  .winbtn:active{transform:scale(.9); color:var(--txt)}
   /* ---------- экраны ---------- */
   .page{display:none; padding:16px; animation:fadein .3s}
   .page.on{display:block}
@@ -393,7 +401,13 @@
 <!-- Шапка -->
 <div class="top">
   <h1>🛒 ПРОДАВЕЦЬ <span>AI</span></h1>
-  <div class="chip"><span class="dot"></span><span class="num" id="topRevenue">₴ 0</span></div>
+  <div class="topright">
+    <div class="chip"><span class="dot"></span><span class="num" id="topRevenue">₴ 0</span></div>
+    <div class="winbtns" id="winBtns">
+      <button class="winbtn" id="wbFull" onclick="winFull()" title="На весь екран">⛶</button>
+      <button class="winbtn" id="wbRest" onclick="winRestore()" title="Звичайний розмір" style="display:none">❐</button>
+    </div>
+  </div>
 </div>
 
 <!-- ЭКРАН: ПРОДАЖ -->
@@ -621,6 +635,43 @@ const API = 'https://prodavets-ai-production.up.railway.app';
 // Telegram Mini App
 const tg = window.Telegram && window.Telegram.WebApp;
 if (tg) { try { tg.ready(); tg.expand(); } catch(e){} }
+
+// ---------- разворот на весь экран [НОВОЕ] ----------
+function winFull(){
+  try{ tg.requestFullscreen(); }
+  catch(e){ toast('Онови Telegram, щоб працював повний екран'); }
+}
+function winRestore(){
+  try{ tg.exitFullscreen(); }catch(e){}
+}
+function updWinBtns(){
+  const fs = !!(tg && tg.isFullscreen);
+  const f = document.getElementById('wbFull');
+  const r = document.getElementById('wbRest');
+  if (f) f.style.display = fs ? 'none' : 'block';
+  if (r) r.style.display = fs ? 'block' : 'none';
+  // В полном экране контент уходит под часы/челку — добавляем отступ сверху
+  let pad = 0;
+  if (fs){
+    try{
+      pad = ((tg.contentSafeAreaInset && tg.contentSafeAreaInset.top) || 0)
+          + ((tg.safeAreaInset && tg.safeAreaInset.top) || 0);
+    }catch(e){}
+    if (!pad) pad = 40;
+  }
+  const top = document.querySelector('.top');
+  if (top) top.style.paddingTop = fs ? (16 + pad) + 'px' : '16px';
+}
+(function(){
+  if (!tg) return;
+  try{
+    if (tg.isVersionAtLeast && tg.isVersionAtLeast('8.0')){
+      document.getElementById('winBtns').style.display = 'flex';
+      tg.onEvent('fullscreenChanged', updWinBtns);
+      updWinBtns();
+    }
+  }catch(e){}
+})();
 
 let products = [];
 let saleProd = null;
