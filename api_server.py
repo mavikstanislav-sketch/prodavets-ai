@@ -914,6 +914,167 @@ async def bulk_receipts(b: BulkReceiptIn):
 
 
 # ------------------------------------------------------------
+#  ИМПОРТ ТОВАРОВ: Excel / CSV / фото прайса  [НОВОЕ]
+#  Онбординг магазина: кидаешь файл или фото -> AI превращает
+#  в список товаров -> предпросмотр -> /products/bulk
+# ------------------------------------------------------------
+class ImportIn(BaseModel):
+    rows: Optional[list] = None   # строки из Excel/CSV (массив массивов)
+    image: Optional[str] = None   # или фото прайса (data:image...)
+
+
+class NewProductIn(BaseModel):
+    name: str
+    buy_price: float = 0
+    sell_price: float = 0
+    stock: int = 0
+    min_stock: int = 3
+
+
+class BulkProductsIn(BaseModel):
+    products: List[NewProductIn]
+
+
+IMPORT_PROMPT = (
+    "Ти перетворюєш дані на список товарів для системи обліку магазину в Україні.\n"
+    "З наданих даних (таблиця з Excel/CSV або фото прайсу/зошита обліку) витягни ВСІ товари.\n"
+    "Для кожного товару визнач:\n"
+    "- name: назва товару\n"
+    "- buy_price: закупівельна ціна за одиницю, грн\n"
+    "- sell_price: ціна продажу за одиницю, грн\n"
+    "- stock: залишок, шт\n"
+    "Правила:\n"
+    "- Якщо в даних лише одна ціна — став її у sell_price, а buy_price: 0.\n"
+    "- Якщо залишок не вказано — став stock: 0.\n"
+    "- Пропускай заголовки таблиці, підсумкові рядки, порожні рядки і все, що не є товаром.\n"
+    "- Назви залишай як є, лише прибирай зайві пробіли. Не вигадуй товари.\n"
+    "Відповідай СУВОРО валідним JSON без пояснень і без markdown:\n"
+    "{\"products\": [{\"name\": \"Кока-кола 0.5л\", \"buy_price\": 17, \"sell_price\": 28, \"stock\": 24}]}"
+)
+
+
+@app.post("/products/import")
+async def import_products(imp: ImportIn):
+    """AI превращает Excel-строки или фото прайса в список товаров (предпросмотр)."""
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(500, "ANTHROPIC_API_KEY не заданий на сервері")
+
+    content = []
+    if imp.image:
+        img = imp.image.strip()
+        if not img.startswith("data:image"):
+            raise HTTPException(400, "Потрібне фото у форматі data:image")
+        if len(img) > 4000000:
+            raise HTTPException(400, "Фото завелике")
+        try:
+            header, b64 = img.split(",", 1)
+            media_type = header.split(":")[1].split(";")[0]
+        except Exception:
+            raise HTTPException(400, "Не вдалося прочитати фото")
+        content.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}})
+        content.append({"type": "text", "text": IMPORT_PROMPT})
+    elif imp.rows:
+        lines = []
+        for r in imp.rows[:300]:
+            if not isinstance(r, list):
+                continue
+            cells = ["" if c is None else str(c)[:60] for c in r[:10]]
+            line = " | ".join(cells)
+            if line.replace("|", "").strip():
+                lines.append(line)
+        if not lines:
+            raise HTTPException(400, "Файл виглядає порожнім")
+        content.append({"type": "text", "text": IMPORT_PROMPT + "\n\nДАНІ ТАБЛИЦІ:\n" + "\n".join(lines)})
+    else:
+        raise HTTPException(400, "Надішли файл або фото")
+
+    payload = {
+        "model": "claude-sonnet-5",
+        "max_tokens": 8000,
+        "messages": [{"role": "user", "content": content}],
+    }
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json=payload,
+        )
+    if resp.status_code != 200:
+        print("Import error:", resp.status_code, resp.text[:300])
+        raise HTTPException(502, "AI тимчасово недоступний, спробуй пізніше")
+
+    txt = extract_text(resp.json())
+    m = re.search(r"\{.*\}", txt, re.DOTALL)
+    if not m:
+        raise HTTPException(502, "AI не зміг розібрати дані, спробуй інший файл або чіткіше фото")
+    try:
+        parsed = json.loads(m.group(0))
+    except Exception:
+        raise HTTPException(502, "AI повернув некоректну відповідь, спробуй ще раз (можливо, файл завеликий — імпортуй частинами)")
+
+    def to_price(x):
+        try:
+            v = round(float(x), 2)
+            return v if v >= 0 else 0
+        except Exception:
+            return 0
+
+    def to_int(x):
+        try:
+            v = int(float(x))
+            return v if v >= 0 else 0
+        except Exception:
+            return 0
+
+    out = []
+    for it in (parsed.get("products") or [])[:250]:
+        name = str(it.get("name") or "").strip()[:80]
+        if not name:
+            continue
+        out.append({
+            "name": name,
+            "buy_price": to_price(it.get("buy_price")),
+            "sell_price": to_price(it.get("sell_price")),
+            "stock": to_int(it.get("stock")),
+        })
+    if not out:
+        raise HTTPException(502, "Товарів у даних не знайдено")
+    return {"ok": True, "products": out}
+
+
+@app.post("/products/bulk")
+async def bulk_products(b: BulkProductsIn):
+    """Массовое создание товаров. Дубликаты по названию пропускаются."""
+    if not b.products:
+        raise HTTPException(400, "Список порожній")
+    created = 0
+    skipped = 0
+    async with pool.acquire() as con:
+        rows = await con.fetch("SELECT name FROM products;")
+        existing = {r["name"].strip().lower() for r in rows}
+        for p in b.products[:250]:
+            name = p.name.strip()
+            if not name:
+                continue
+            if name.lower() in existing:
+                skipped += 1
+                continue
+            await con.execute(
+                """INSERT INTO products (name, buy_price, sell_price, stock, min_stock)
+                   VALUES ($1, $2, $3, $4, $5);""",
+                name[:80], max(p.buy_price, 0), max(p.sell_price, 0),
+                max(p.stock, 0), max(p.min_stock, 1),
+            )
+            existing.add(name.lower())
+            created += 1
+    return {"ok": True, "created": created, "skipped": skipped}
+
+
+# ------------------------------------------------------------
 #  КАРТОЧКА ТОВАРА (детальная статистика по одному товару)
 # ------------------------------------------------------------
 @app.get("/products/{product_id}/card")
