@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Продавець AI</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Unbounded:wght@700;900&display=swap&subset=cyrillic" rel="stylesheet">
@@ -456,6 +457,7 @@
 <!-- ЭКРАН: ТОВАРИ -->
 <div class="page" id="pageProducts">
   <button class="scanbtn" onclick="openScan()">📄 AI-приймання накладної (фото)</button>
+  <button class="scanbtn" style="border-color:rgba(0,214,143,.5); background:rgba(0,214,143,.06); color:var(--grn)" onclick="openImp()">📥 Імпорт товарів (Excel / фото прайсу)</button>
   <div class="stockbtns">
     <button class="stockbtn rc" onclick="openRcpt()">🚚 Приход товару</button>
     <button class="stockbtn iv" onclick="openCheck()">🧮 Звірка залишків</button>
@@ -646,6 +648,25 @@
     <input type="file" id="scFile" accept="image/*" capture="environment" style="display:none" onchange="scanInvoice(this)">
     <div class="row2" id="scBtns" style="margin-top:12px">
       <button class="btn gray" onclick="closeScan()">Закрити</button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка: ІМПОРТ ТОВАРІВ [НОВОЕ] -->
+<div class="ov" id="ovImp" onclick="if(event.target===this)closeImp()">
+  <div class="sheet">
+    <h3>📥 Імпорт товарів</h3>
+    <div class="sub" id="impSub">Кинь Excel/CSV файл або сфотографуй прайс чи зошит обліку — AI сам створить товари.</div>
+    <div id="impBody">
+      <div class="row2">
+        <button class="btn b" onclick="document.getElementById('impFileX').click()">📊 Excel / CSV</button>
+        <button class="btn g" onclick="document.getElementById('impFileP').click()">📷 Фото прайсу</button>
+      </div>
+    </div>
+    <input type="file" id="impFileX" accept=".xlsx,.xls,.csv" style="display:none" onchange="impPick(this)">
+    <input type="file" id="impFileP" accept="image/*" capture="environment" style="display:none" onchange="impPick(this)">
+    <div class="row2" id="impBtns" style="margin-top:12px">
+      <button class="btn gray" onclick="closeImp()">Закрити</button>
     </div>
   </div>
 </div>
@@ -1318,6 +1339,119 @@ async function confirmScan(){
     if (!r.ok) throw new Error(d.detail || 'Помилка');
     closeScan();
     toast('📦 Прийнято позицій: ' + d.accepted + ' ✅');
+    if (tg && tg.HapticFeedback){ try{ tg.HapticFeedback.notificationOccurred('success'); }catch(e){} }
+    loadProducts();
+  }catch(e){
+    toast('❌ ' + e.message);
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ---------- ІМПОРТ ТОВАРІВ [НОВОЕ] ----------
+let impItems = [];
+
+function openImp(){
+  impItems = [];
+  $('impSub').textContent = 'Кинь Excel/CSV файл або сфотографуй прайс чи зошит обліку — AI сам створить товари.';
+  $('impBody').innerHTML =
+    '<div class="row2">' +
+    '<button class="btn b" onclick="document.getElementById(\'impFileX\').click()">📊 Excel / CSV</button>' +
+    '<button class="btn g" onclick="document.getElementById(\'impFileP\').click()">📷 Фото прайсу</button>' +
+    '</div>';
+  $('impBtns').innerHTML = '<button class="btn gray" onclick="closeImp()">Закрити</button>';
+  $('ovImp').classList.add('on');
+}
+function closeImp(){ $('ovImp').classList.remove('on'); }
+
+async function impPick(inp){
+  const file = inp.files && inp.files[0];
+  if (!file) return;
+  inp.value = '';
+  $('impSub').textContent = 'AI розбирає дані — 10-30 секунд…';
+  $('impBody').innerHTML = '<div class="spin">🤖 AI розбирає товари…</div>';
+  $('impBtns').innerHTML = '<button class="btn gray" onclick="closeImp()">Закрити</button>';
+  try{
+    let body;
+    if (file.type && file.type.indexOf('image/') === 0){
+      body = { image: await compressTo(file, 1400, 0.8) };
+    } else {
+      if (typeof XLSX === 'undefined') throw new Error('Не завантажилась бібліотека Excel, онови сторінку');
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
+      if (!rows || !rows.length) throw new Error('Файл виглядає порожнім');
+      body = { rows: rows.slice(0, 300) };
+    }
+    const r = await fetch(API + '/products/import', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Помилка');
+    renderImp(d);
+  }catch(e){
+    $('impSub').textContent = 'Щось пішло не так.';
+    $('impBody').innerHTML = '<div class="empty" style="padding:16px">❌ ' + esc(e.message) + '</div>';
+    $('impBtns').innerHTML =
+      '<button class="btn gray" onclick="closeImp()">Закрити</button>' +
+      '<button class="btn b" onclick="openImp()">🔄 Спробувати ще</button>';
+  }
+}
+
+function renderImp(d){
+  impItems = d.products || [];
+  if (!impItems.length){
+    $('impSub').textContent = 'Нічого не знайдено.';
+    $('impBody').innerHTML = '<div class="empty" style="padding:16px">AI не знайшов товарів у даних 😕</div>';
+    $('impBtns').innerHTML =
+      '<button class="btn gray" onclick="closeImp()">Закрити</button>' +
+      '<button class="btn b" onclick="openImp()">🔄 Спробувати ще</button>';
+    return;
+  }
+  const w = document.createElement('div');
+  w.className = 'chklist';
+  impItems.forEach((it, i) => {
+    const row = document.createElement('div');
+    row.className = 'chkrow';
+    row.innerHTML =
+      '<div class="cn"><div class="n">' + esc(it.name) + '</div>' +
+      '<div class="e">закуп · продаж · к-сть →</div></div>' +
+      '<input type="number" inputmode="decimal" value="' + it.buy_price + '" data-i="' + i + '" data-f="buy" style="width:54px" title="Закупка">' +
+      '<input type="number" inputmode="decimal" value="' + it.sell_price + '" data-i="' + i + '" data-f="sell" style="width:54px" title="Продаж">' +
+      '<input type="number" inputmode="numeric" value="' + it.stock + '" data-i="' + i + '" data-f="stock" style="width:50px" title="Кількість">';
+    w.appendChild(row);
+  });
+  $('impBody').innerHTML = '';
+  $('impBody').appendChild(w);
+  $('impSub').textContent = 'AI знайшов ' + impItems.length + ' товарів. Перевір ціни та залишки, підправ якщо треба.';
+  $('impBtns').innerHTML =
+    '<button class="btn gray" onclick="closeImp()">Скасувати</button>' +
+    '<button class="btn g" id="impGo" onclick="confirmImp()">✅ Створити всі</button>';
+}
+
+async function confirmImp(){
+  document.querySelectorAll('#impBody input').forEach(inp => {
+    const i = parseInt(inp.dataset.i);
+    if (isNaN(i) || !impItems[i]) return;
+    const v = parseFloat(inp.value);
+    if (inp.dataset.f === 'buy')  impItems[i].buy_price  = (isNaN(v) || v < 0) ? 0 : v;
+    if (inp.dataset.f === 'sell') impItems[i].sell_price = (isNaN(v) || v < 0) ? 0 : v;
+    if (inp.dataset.f === 'stock') impItems[i].stock = (isNaN(v) || v < 0) ? 0 : Math.round(v);
+  });
+  const btn = $('impGo');
+  if (btn) btn.disabled = true;
+  try{
+    const r = await fetch(API + '/products/bulk', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ products: impItems })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Помилка');
+    closeImp();
+    toast('✅ Створено товарів: ' + d.created + (d.skipped ? ' · пропущено дублів: ' + d.skipped : ''));
     if (tg && tg.HapticFeedback){ try{ tg.HapticFeedback.notificationOccurred('success'); }catch(e){} }
     loadProducts();
   }catch(e){
