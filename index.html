@@ -160,6 +160,37 @@
     background:rgba(108,140,255,.06); color:var(--acc); font-size:15px; font-weight:800;
     cursor:pointer; margin-bottom:14px; font-family:'Manrope';
   }
+  /* ---------- ФОТО ТОВАРА [НОВОЕ] ---------- */
+  .pimg{
+    width:100%; height:64px; object-fit:cover; border-radius:11px;
+    margin-bottom:8px; display:block; background:var(--glass2);
+  }
+  .item .thumb{
+    width:46px; height:46px; border-radius:12px; overflow:hidden; flex:none;
+    background:var(--glass2); border:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center; font-size:19px;
+  }
+  .item .thumb img{width:100%; height:100%; object-fit:cover}
+  .photo-row{display:flex; align-items:center; gap:12px}
+  .photo-prev{
+    width:64px; height:64px; border-radius:14px; border:1px solid var(--line);
+    background:var(--glass2); background-size:cover; background-position:center;
+    display:flex; align-items:center; justify-content:center; font-size:24px;
+    cursor:pointer; flex:none;
+  }
+  .photo-btns{display:flex; flex-direction:column; gap:7px; flex:1}
+  .photo-btn{
+    padding:10px; border-radius:11px; border:1px solid rgba(108,140,255,.4);
+    background:rgba(108,140,255,.08); color:var(--acc); font-size:13px;
+    font-weight:800; cursor:pointer; font-family:'Manrope';
+  }
+  .photo-btn.del{
+    border-color:rgba(255,92,122,.4); background:rgba(255,92,122,.07); color:var(--red);
+  }
+  .cdimg{
+    width:100%; height:150px; object-fit:cover; border-radius:14px;
+    margin:8px 0 4px; display:block;
+  }
   /* ---------- СКЛАД: приход и сверка [НОВОЕ] ---------- */
   .stockbtns{display:flex; gap:9px; margin-bottom:10px}
   .stockbtn{
@@ -500,6 +531,17 @@
     <h3 id="mfTitle">Новий товар</h3>
     <div class="sub">Заповни поля та збережи</div>
     <div class="fld">
+      <label>Фото товару</label>
+      <div class="photo-row">
+        <div class="photo-prev" id="fPhotoPrev" onclick="document.getElementById('fPhoto').click()">📷</div>
+        <div class="photo-btns">
+          <button class="photo-btn" onclick="document.getElementById('fPhoto').click()">📷 Обрати фото</button>
+          <button class="photo-btn del" id="fPhotoDel" style="display:none" onclick="clearPhoto()">✕ Прибрати</button>
+        </div>
+      </div>
+      <input type="file" id="fPhoto" accept="image/*" style="display:none" onchange="pickPhoto(this)">
+    </div>
+    <div class="fld">
       <label>Назва товару</label>
       <input id="fName" placeholder="Кока-кола 0.5">
     </div>
@@ -592,6 +634,7 @@
       <h3 id="cdName">Товар</h3>
     </div>
     <div class="sub" id="cdPrices"></div>
+    <img class="cdimg" id="cdImg" src="" alt="" style="display:none">
     <div class="stockbig" id="cdStockBox">
       <div class="n num" id="cdStock">0</div>
       <div class="l">зараз на складі, шт</div>
@@ -800,6 +843,7 @@ function renderSaleGrid(){
     const b = document.createElement('button');
     b.className = 'pbtn' + (p.stock <= 0 ? ' out' : p.low ? ' low' : '');
     b.innerHTML =
+      (p.img ? '<img class="pimg" src="' + p.img + '" alt="">' : '') +
       '<div class="nm">' + esc(p.name) + '</div>' +
       '<div><div class="pr">' + uah(p.sell_price) + '</div>' +
       '<div class="st">' + (p.stock <= 0 ? 'немає в наявності' :
@@ -869,11 +913,13 @@ function renderProdList(){
     const d = document.createElement('div');
     d.className = 'item';
     d.innerHTML =
+      '<div class="thumb">' + (p.img ? '<img src="' + p.img + '" alt="">' : '📦') + '</div>' +
       '<div class="info"><div class="nm">' + esc(p.name) + '</div>' +
       '<div class="meta">Закупка <b>' + uah(p.buy_price) + '</b> · Продаж <b>' + uah(p.sell_price) + '</b> · ' +
       (p.low ? '<span class="lw">залишок ' + p.stock + ' ⚠️</span>' : 'залишок ' + p.stock) +
       '</div></div>';
     d.querySelector('.info').onclick = () => openCard(p);
+    d.querySelector('.thumb').onclick = () => openCard(p);
     const eb = document.createElement('button');
     eb.className = 'ico'; eb.textContent = '✏️';
     eb.onclick = () => openForm(p);
@@ -1078,6 +1124,46 @@ async function loadHist(){
   }
 }
 
+// ---------- ФОТО ТОВАРА [НОВОЕ] ----------
+let fImgData = null;
+function pickPhoto(inp){
+  const file = inp.files && inp.files[0];
+  if (!file) return;
+  const rd = new FileReader();
+  rd.onload = e => {
+    const img = new Image();
+    img.onload = () => {
+      // сжимаем до 400px по большей стороне — быстро грузится и мало весит
+      const max = 400;
+      let w = img.width, h = img.height;
+      if (w > h){ if (w > max){ h = Math.round(h * max / w); w = max; } }
+      else { if (h > max){ w = Math.round(w * max / h); h = max; } }
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      fImgData = c.toDataURL('image/jpeg', 0.72);
+      updPhotoPrev();
+    };
+    img.src = e.target.result;
+  };
+  rd.readAsDataURL(file);
+  inp.value = '';
+}
+function clearPhoto(){ fImgData = null; updPhotoPrev(); }
+function updPhotoPrev(){
+  const pv = $('fPhotoPrev');
+  if (!pv) return;
+  if (fImgData){
+    pv.style.backgroundImage = 'url(' + fImgData + ')';
+    pv.textContent = '';
+    $('fPhotoDel').style.display = 'block';
+  } else {
+    pv.style.backgroundImage = '';
+    pv.textContent = '📷';
+    $('fPhotoDel').style.display = 'none';
+  }
+}
+
 // ---------- форма товара ----------
 function openForm(p){
   editId = p ? p.id : null;
@@ -1087,6 +1173,8 @@ function openForm(p){
   $('fSell').value  = p ? p.sell_price : '';
   $('fStock').value = p ? p.stock : '';
   $('fMin').value   = p ? p.min_stock : '';
+  fImgData = (p && p.img) ? p.img : null;
+  updPhotoPrev();
   $('delWrap').style.display = p ? 'block' : 'none';
   $('ovForm').classList.add('on');
 }
@@ -1100,7 +1188,8 @@ async function saveProduct(){
     buy_price:  parseFloat($('fBuy').value)  || 0,
     sell_price: parseFloat($('fSell').value) || 0,
     stock:      parseInt($('fStock').value)  || 0,
-    min_stock:  parseInt($('fMin').value)    || 3
+    min_stock:  parseInt($('fMin').value)    || 3,
+    img:        fImgData
   };
   const btn = $('mfBtn');
   btn.disabled = true;
@@ -1143,6 +1232,9 @@ async function openCard(p){
   cardProd = p;
   $('cdName').textContent = p.name;
   $('cdPrices').textContent = 'Закупка ' + uah(p.buy_price) + ' · Продаж ' + uah(p.sell_price);
+  const ci = $('cdImg');
+  if (p.img){ ci.src = p.img; ci.style.display = 'block'; }
+  else { ci.src = ''; ci.style.display = 'none'; }
   $('cdStock').textContent = p.stock;
   $('cdStockBox').className = 'stockbig' + (p.low ? ' low' : '');
   ['cdTQty','cdMQty','cdYQty'].forEach(id => $(id).textContent = '…');
