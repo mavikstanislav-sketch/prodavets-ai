@@ -1,15 +1,19 @@
 # ============================================================
-#  Продавець AI — api_server.py (версия 1: фундамент)
+#  Продавець AI — api_server.py (версия 2: склад и недостачи)
 #  FastAPI + PostgreSQL (Railway)
 #  Что умеет:
 #   - товары: добавить / список / изменить / удалить
 #   - продажи: пробить продажу (списывает остаток)
+#   - ПРИХОД товара на склад (+ история приходов)          [НОВОЕ]
+#   - СВЕРКА остатков: контроль недостач                   [НОВОЕ]
 #   - статистика: за сегодня и за период
 #   - лента последних продаж (для живого дашборда)
+#   - AI-советник (видит и недостачи)
 # ============================================================
 
 import os
 from datetime import datetime, timedelta, timezone
+from typing import List, Optional
 
 import asyncpg
 from fastapi import FastAPI, HTTPException
@@ -77,7 +81,28 @@ async def startup():
         await con.execute(
             "CREATE INDEX IF NOT EXISTS idx_sales_sold_at ON sales(sold_at);"
         )
-    print("База готова: таблицы products и sales на месте")
+        # НОВОЕ: история приходов товара на склад
+        await con.execute("""
+            CREATE TABLE IF NOT EXISTS receipts (
+                id SERIAL PRIMARY KEY,
+                product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                qty INTEGER NOT NULL,
+                buy_price NUMERIC(12,2) NOT NULL DEFAULT 0,  -- закупка этой партии
+                received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+        # НОВОЕ: история сверок остатков (контроль недостач)
+        await con.execute("""
+            CREATE TABLE IF NOT EXISTS inventory_checks (
+                id SERIAL PRIMARY KEY,
+                product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                expected INTEGER NOT NULL,   -- сколько должно быть по системе
+                actual INTEGER NOT NULL,     -- сколько реально на полке
+                diff INTEGER NOT NULL,       -- разница (минус = недостача)
+                checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+    print("База готова: products, sales, receipts, inventory_checks на месте")
 
 
 @app.on_event("shutdown")
@@ -100,6 +125,21 @@ class ProductIn(BaseModel):
 class SaleIn(BaseModel):
     product_id: int
     qty: int = 1
+
+
+class ReceiptIn(BaseModel):
+    product_id: int
+    qty: int = 1
+    buy_price: Optional[float] = None  # новая цена закупки (можно не указывать)
+
+
+class CheckItemIn(BaseModel):
+    product_id: int
+    actual: int  # сколько реально насчитали на полке
+
+
+class InventoryIn(BaseModel):
+    items: List[CheckItemIn]
 
 
 # ------------------------------------------------------------
@@ -234,6 +274,151 @@ async def recent_sales(limit: int = 20):
 
 
 # ------------------------------------------------------------
+#  ПРИХОД ТОВАРА НА СКЛАД  [НОВОЕ]
+# ------------------------------------------------------------
+@app.post("/receipts")
+async def add_receipt(rc: ReceiptIn):
+    """Приход товара: увеличивает остаток и пишет запись в историю приходов.
+    Если указана новая цена закупки — обновляет её у товара."""
+    if rc.qty <= 0:
+        raise HTTPException(400, "Кількість має бути більше нуля")
+    async with pool.acquire() as con:
+        async with con.transaction():
+            product = await con.fetchrow(
+                "SELECT * FROM products WHERE id=$1 FOR UPDATE;", rc.product_id
+            )
+            if not product:
+                raise HTTPException(404, "Товар не знайдено")
+            # Цена закупки партии: новая (если указали) или текущая
+            price = float(product["buy_price"])
+            if rc.buy_price is not None and rc.buy_price > 0:
+                price = rc.buy_price
+                await con.execute(
+                    "UPDATE products SET buy_price=$1 WHERE id=$2;",
+                    price, rc.product_id,
+                )
+            await con.execute(
+                "UPDATE products SET stock = stock + $1 WHERE id=$2;",
+                rc.qty, rc.product_id,
+            )
+            row = await con.fetchrow(
+                """INSERT INTO receipts (product_id, qty, buy_price)
+                   VALUES ($1, $2, $3) RETURNING id;""",
+                rc.product_id, rc.qty, price,
+            )
+    return {
+        "ok": True,
+        "receipt_id": row["id"],
+        "new_stock": product["stock"] + rc.qty,
+    }
+
+
+@app.get("/receipts/recent")
+async def recent_receipts(limit: int = 20):
+    """Лента последних приходов на склад."""
+    limit = max(1, min(limit, 100))
+    async with pool.acquire() as con:
+        rows = await con.fetch(
+            """SELECT r.id, r.qty, r.buy_price, r.received_at, p.name
+               FROM receipts r JOIN products p ON p.id = r.product_id
+               ORDER BY r.received_at DESC LIMIT $1;""",
+            limit,
+        )
+    return [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "qty": r["qty"],
+            "sum": float(r["buy_price"]) * r["qty"],
+            "time": r["received_at"].astimezone(KYIV).strftime("%H:%M"),
+            "date": r["received_at"].astimezone(KYIV).strftime("%d.%m"),
+        }
+        for r in rows
+    ]
+
+
+# ------------------------------------------------------------
+#  СВЕРКА ОСТАТКОВ: КОНТРОЛЬ НЕДОСТАЧ  [НОВОЕ]
+# ------------------------------------------------------------
+@app.post("/inventory/check")
+async def inventory_check(inv: InventoryIn):
+    """Сверка: сравнивает реальные остатки с системными.
+    Записывает расхождения и обновляет остатки на реальные."""
+    if not inv.items:
+        raise HTTPException(400, "Список порожній")
+    results = []
+    async with pool.acquire() as con:
+        async with con.transaction():
+            for item in inv.items:
+                if item.actual < 0:
+                    continue
+                product = await con.fetchrow(
+                    "SELECT * FROM products WHERE id=$1 FOR UPDATE;",
+                    item.product_id,
+                )
+                if not product:
+                    continue
+                expected = product["stock"]
+                diff = item.actual - expected
+                await con.execute(
+                    """INSERT INTO inventory_checks (product_id, expected, actual, diff)
+                       VALUES ($1, $2, $3, $4);""",
+                    item.product_id, expected, item.actual, diff,
+                )
+                # Приводим системный остаток к реальному
+                if diff != 0:
+                    await con.execute(
+                        "UPDATE products SET stock=$1 WHERE id=$2;",
+                        item.actual, item.product_id,
+                    )
+                results.append({
+                    "product_id": item.product_id,
+                    "name": product["name"],
+                    "expected": expected,
+                    "actual": item.actual,
+                    "diff": diff,
+                    "loss": round(float(product["sell_price"]) * (-diff), 2) if diff < 0 else 0,
+                })
+    shortages = [r for r in results if r["diff"] < 0]
+    surplus = [r for r in results if r["diff"] > 0]
+    total_loss = round(sum(r["loss"] for r in shortages), 2)
+    return {
+        "ok": True,
+        "checked": len(results),
+        "shortages": shortages,       # недостачи
+        "surplus": surplus,           # излишки
+        "total_loss": total_loss,     # потери в ценах продажи, грн
+        "results": results,
+    }
+
+
+@app.get("/inventory/recent")
+async def recent_checks(limit: int = 30):
+    """История расхождений (только где diff != 0) — для отчёта владельцу."""
+    limit = max(1, min(limit, 200))
+    async with pool.acquire() as con:
+        rows = await con.fetch(
+            """SELECT c.id, c.expected, c.actual, c.diff, c.checked_at, p.name
+               FROM inventory_checks c JOIN products p ON p.id = c.product_id
+               WHERE c.diff <> 0
+               ORDER BY c.checked_at DESC LIMIT $1;""",
+            limit,
+        )
+    return [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "expected": r["expected"],
+            "actual": r["actual"],
+            "diff": r["diff"],
+            "time": r["checked_at"].astimezone(KYIV).strftime("%H:%M"),
+            "date": r["checked_at"].astimezone(KYIV).strftime("%d.%m"),
+        }
+        for r in rows
+    ]
+
+
+# ------------------------------------------------------------
 #  СТАТИСТИКА
 # ------------------------------------------------------------
 @app.get("/stats/today")
@@ -309,7 +494,7 @@ def extract_text(data: dict) -> str:
 
 
 async def collect_store_data() -> str:
-    """Собирает сводку по магазину для AI: товары, сегодня, 30 дней, топы."""
+    """Собирает сводку по магазину для AI: товары, сегодня, 30 дней, топы, недостачи."""
     start, end = today_bounds()
     month_start = (datetime.now(KYIV) - timedelta(days=29)).replace(
         hour=0, minute=0, second=0, microsecond=0
@@ -343,6 +528,20 @@ async def collect_store_data() -> str:
                GROUP BY p.name ORDER BY revenue DESC LIMIT 15;""",
             month_start,
         )
+        receipts30 = await con.fetch(
+            """SELECT p.name, SUM(r.qty) AS qty
+               FROM receipts r JOIN products p ON p.id = r.product_id
+               WHERE r.received_at >= $1
+               GROUP BY p.name ORDER BY qty DESC LIMIT 15;""",
+            month_start,
+        )
+        shortages30 = await con.fetch(
+            """SELECT p.name, SUM(c.diff) AS diff
+               FROM inventory_checks c JOIN products p ON p.id = c.product_id
+               WHERE c.checked_at >= $1 AND c.diff < 0
+               GROUP BY p.name ORDER BY diff ASC LIMIT 15;""",
+            month_start,
+        )
 
     lines = ["=== ТОВАРИ НА СКЛАДІ ==="]
     for r in prods:
@@ -373,6 +572,18 @@ async def collect_store_data() -> str:
     if not top:
         lines.append("(продажів ще не було)")
 
+    lines.append("\n=== ПРИХІД НА СКЛАД ЗА 30 ДНІВ ===")
+    for r in receipts30:
+        lines.append(f"- {r['name']}: прийнято {r['qty']} шт")
+    if not receipts30:
+        lines.append("(приходів не було)")
+
+    lines.append("\n=== НЕДОСТАЧІ ЗА 30 ДНІВ (за звірками) ===")
+    for r in shortages30:
+        lines.append(f"- {r['name']}: недостача {abs(int(r['diff']))} шт")
+    if not shortages30:
+        lines.append("(недостач не виявлено)")
+
     return "\n".join(lines)
 
 
@@ -391,6 +602,7 @@ async def advisor(a: AdvisorIn):
         "Ти — AI-порадник власника невеликого магазину в Україні. "
         "Відповідай українською, коротко і по суті (2-6 речень), з конкретними цифрами з даних. "
         "Якщо доречно — дай практичну пораду (що докупити, на що звернути увагу). "
+        "Якщо в даних є недостачі — обов'язково зверни на них увагу власника. "
         "Не вигадуй дані, яких немає. Ось актуальні дані магазину:\n\n" + store_data
     )
 
