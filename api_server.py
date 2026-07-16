@@ -11,8 +11,10 @@
 #   - AI-советник (видит и недостачи)
 # ============================================================
 
+import json
 import os
 import random
+import re
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -745,6 +747,170 @@ async def advisor(a: AdvisorIn):
     if not answer:
         raise HTTPException(502, "AI повернув порожню відповідь")
     return {"answer": answer}
+
+
+# ------------------------------------------------------------
+#  AI-ПРИЁМКА НАКЛАДНОЙ ПО ФОТО  [НОВОЕ]
+#  Фото накладной -> Claude Vision -> позиции, сопоставленные
+#  с товарами магазина -> владелец проверяет -> /receipts/bulk
+# ------------------------------------------------------------
+class ScanIn(BaseModel):
+    image: str  # data:image/jpeg;base64,...
+
+
+class BulkReceiptItem(BaseModel):
+    product_id: int
+    qty: int
+    buy_price: Optional[float] = None
+
+
+class BulkReceiptIn(BaseModel):
+    items: List[BulkReceiptItem]
+
+
+@app.post("/receipts/scan")
+async def scan_invoice(s: ScanIn):
+    """AI читает фото накладной и сопоставляет позиции с товарами магазина."""
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(500, "ANTHROPIC_API_KEY не заданий на сервері")
+    img = (s.image or "").strip()
+    if not img.startswith("data:image"):
+        raise HTTPException(400, "Потрібне фото у форматі data:image")
+    if len(img) > 4000000:
+        raise HTTPException(400, "Фото завелике, спробуй ще раз")
+    try:
+        header, b64 = img.split(",", 1)
+        media_type = header.split(":")[1].split(";")[0]
+    except Exception:
+        raise HTTPException(400, "Не вдалося прочитати фото")
+
+    async with pool.acquire() as con:
+        prods = await con.fetch("SELECT id, name FROM products ORDER BY name;")
+    if not prods:
+        raise HTTPException(400, "Спочатку додай товари в магазин")
+    plist = "\n".join(str(r["id"]) + ": " + r["name"] for r in prods)
+    name_map = {r["id"]: r["name"] for r in prods}
+
+    prompt = (
+        "Ти читаєш ФОТО НАКЛАДНОЇ від постачальника для невеликого магазину.\n\n"
+        "Ось список товарів магазину (id: назва):\n" + plist + "\n\n"
+        "Завдання:\n"
+        "1. Розпізнай усі позиції накладної: назву, кількість (шт) і ціну закупки за ОДИНИЦЮ (грн).\n"
+        "2. Зістав кожну позицію з товаром магазину ЗА ЗМІСТОМ (назви можуть відрізнятися: "
+        "«Coca-Cola 0,5 ПЕТ» = «Кока-кола 0.5л»).\n"
+        "3. Якщо кількість вказана ящиками/упаковками і видно фасування — переведи в штуки.\n"
+        "4. Позиції, яких немає серед товарів магазину, поклади в unmatched.\n\n"
+        "Відповідай СУВОРО валідним JSON без пояснень і без markdown:\n"
+        "{\"items\": [{\"product_id\": 16, \"invoice_name\": \"Coca-Cola 0,5\", \"qty\": 24, \"buy_price\": 17.5}], "
+        "\"unmatched\": [{\"invoice_name\": \"Спрайт 1л\", \"qty\": 12, \"buy_price\": 22}]}\n"
+        "Якщо ціни за одиницю не видно — постав buy_price: null. Не вигадуй позиції, яких немає на фото."
+    )
+
+    payload = {
+        "model": "claude-sonnet-5",
+        "max_tokens": 2000,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}},
+                {"type": "text", "text": prompt},
+            ],
+        }],
+    }
+    async with httpx.AsyncClient(timeout=90) as client:
+        resp = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json=payload,
+        )
+    if resp.status_code != 200:
+        print("Scan error:", resp.status_code, resp.text[:300])
+        raise HTTPException(502, "AI тимчасово недоступний, спробуй пізніше")
+
+    txt = extract_text(resp.json())
+    if "```" in txt:
+        txt = txt.replace("```json", "```").split("```")[1] if txt.count("```") >= 2 else txt
+    m = re.search(r"\{.*\}", txt, re.DOTALL)
+    if not m:
+        raise HTTPException(502, "AI не зміг розібрати накладну, спробуй чіткіше фото")
+    try:
+        parsed = json.loads(m.group(0))
+    except Exception:
+        raise HTTPException(502, "AI повернув некоректну відповідь, спробуй ще раз")
+
+    items = []
+    for it in (parsed.get("items") or []):
+        try:
+            pid = int(it.get("product_id"))
+            qty = int(it.get("qty") or 0)
+        except Exception:
+            continue
+        if pid not in name_map or qty <= 0:
+            continue
+        bp = it.get("buy_price")
+        try:
+            bp = round(float(bp), 2) if bp is not None else None
+            if bp is not None and bp <= 0:
+                bp = None
+        except Exception:
+            bp = None
+        items.append({
+            "product_id": pid,
+            "name": name_map[pid],
+            "invoice_name": str(it.get("invoice_name") or "")[:80],
+            "qty": qty,
+            "buy_price": bp,
+        })
+
+    unmatched = []
+    for it in (parsed.get("unmatched") or []):
+        unmatched.append({
+            "invoice_name": str(it.get("invoice_name") or "?")[:80],
+            "qty": it.get("qty"),
+            "buy_price": it.get("buy_price"),
+        })
+
+    return {"ok": True, "items": items, "unmatched": unmatched}
+
+
+@app.post("/receipts/bulk")
+async def bulk_receipts(b: BulkReceiptIn):
+    """Массовый приход: принимает сразу все позиции накладной."""
+    if not b.items:
+        raise HTTPException(400, "Список порожній")
+    accepted = 0
+    async with pool.acquire() as con:
+        async with con.transaction():
+            for it in b.items:
+                if it.qty <= 0:
+                    continue
+                product = await con.fetchrow(
+                    "SELECT * FROM products WHERE id=$1 FOR UPDATE;", it.product_id
+                )
+                if not product:
+                    continue
+                price = float(product["buy_price"])
+                if it.buy_price is not None and it.buy_price > 0:
+                    price = it.buy_price
+                    await con.execute(
+                        "UPDATE products SET buy_price=$1 WHERE id=$2;",
+                        price, it.product_id,
+                    )
+                await con.execute(
+                    "UPDATE products SET stock = stock + $1 WHERE id=$2;",
+                    it.qty, it.product_id,
+                )
+                await con.execute(
+                    """INSERT INTO receipts (product_id, qty, buy_price)
+                       VALUES ($1, $2, $3);""",
+                    it.product_id, it.qty, price,
+                )
+                accepted += 1
+    return {"ok": True, "accepted": accepted}
 
 
 # ------------------------------------------------------------
