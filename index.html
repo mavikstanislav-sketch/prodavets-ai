@@ -209,6 +209,13 @@
     background:var(--glass); color:var(--mut); font-size:12.5px; font-weight:800;
     cursor:pointer; margin-bottom:12px; font-family:'Manrope';
   }
+  .scanbtn{
+    width:100%; padding:15px; border-radius:15px; border:1px dashed rgba(160,107,255,.55);
+    background:rgba(160,107,255,.07); color:var(--vio); font-size:14px; font-weight:800;
+    cursor:pointer; margin-bottom:9px; font-family:'Manrope'; transition:transform .1s;
+  }
+  .scanbtn:active{transform:scale(.98)}
+  .scrow-un{opacity:.55}
   .fld select{
     width:100%; padding:14px; border-radius:13px; border:1px solid var(--line);
     background:rgba(255,255,255,.04); color:var(--txt); font-size:16px; outline:none;
@@ -448,6 +455,7 @@
 
 <!-- ЭКРАН: ТОВАРИ -->
 <div class="page" id="pageProducts">
+  <button class="scanbtn" onclick="openScan()">📄 AI-приймання накладної (фото)</button>
   <div class="stockbtns">
     <button class="stockbtn rc" onclick="openRcpt()">🚚 Приход товару</button>
     <button class="stockbtn iv" onclick="openCheck()">🧮 Звірка залишків</button>
@@ -623,6 +631,21 @@
     <div class="chklist" id="histList"><div class="spin">Завантаження…</div></div>
     <div class="row2">
       <button class="btn gray" onclick="closeHist()">Закрити</button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка: AI-ПРИЙМАННЯ НАКЛАДНОЇ [НОВОЕ] -->
+<div class="ov" id="ovScan" onclick="if(event.target===this)closeScan()">
+  <div class="sheet">
+    <h3>📄 AI-приймання накладної</h3>
+    <div class="sub" id="scSub">Сфотографуй накладну від постачальника — AI сам розпізнає товари, кількість і ціни.</div>
+    <div id="scBody">
+      <button class="btn b" style="width:100%" onclick="document.getElementById('scFile').click()">📷 Сфотографувати / обрати фото</button>
+    </div>
+    <input type="file" id="scFile" accept="image/*" capture="environment" style="display:none" onchange="scanInvoice(this)">
+    <div class="row2" id="scBtns" style="margin-top:12px">
+      <button class="btn gray" onclick="closeScan()">Закрити</button>
     </div>
   </div>
 </div>
@@ -1161,6 +1184,145 @@ function updPhotoPrev(){
     pv.style.backgroundImage = '';
     pv.textContent = '📷';
     $('fPhotoDel').style.display = 'none';
+  }
+}
+
+// ---------- AI-ПРИЙМАННЯ НАКЛАДНОЇ [НОВОЕ] ----------
+let scanItems = [];
+
+function openScan(){
+  scanItems = [];
+  $('scSub').textContent = 'Сфотографуй накладну від постачальника — AI сам розпізнає товари, кількість і ціни.';
+  $('scBody').innerHTML =
+    '<button class="btn b" style="width:100%" onclick="document.getElementById(\'scFile\').click()">📷 Сфотографувати / обрати фото</button>';
+  $('scBtns').innerHTML = '<button class="btn gray" onclick="closeScan()">Закрити</button>';
+  $('ovScan').classList.add('on');
+}
+function closeScan(){ $('ovScan').classList.remove('on'); }
+
+// Сжатие фото до max px по большей стороне (для накладной нужно крупнее, чем для товара)
+function compressTo(file, max, q){
+  return new Promise((resolve, reject) => {
+    const rd = new FileReader();
+    rd.onerror = () => reject(new Error('Не вдалося прочитати файл'));
+    rd.onload = e => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Не вдалося відкрити фото'));
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > h){ if (w > max){ h = Math.round(h * max / w); w = max; } }
+        else { if (h > max){ w = Math.round(w * max / h); h = max; } }
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL('image/jpeg', q));
+      };
+      img.src = e.target.result;
+    };
+    rd.readAsDataURL(file);
+  });
+}
+
+async function scanInvoice(inp){
+  const file = inp.files && inp.files[0];
+  if (!file) return;
+  inp.value = '';
+  $('scSub').textContent = 'AI розбирає накладну — це 10-20 секунд…';
+  $('scBody').innerHTML = '<div class="spin">🤖 AI читає накладну…</div>';
+  $('scBtns').innerHTML = '<button class="btn gray" onclick="closeScan()">Закрити</button>';
+  try{
+    const data = await compressTo(file, 1400, 0.8);
+    const r = await fetch(API + '/receipts/scan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ image: data })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Помилка');
+    renderScan(d);
+  }catch(e){
+    $('scSub').textContent = 'Щось пішло не так.';
+    $('scBody').innerHTML = '<div class="empty" style="padding:16px">❌ ' + esc(e.message) + '</div>';
+    $('scBtns').innerHTML =
+      '<button class="btn gray" onclick="closeScan()">Закрити</button>' +
+      '<button class="btn b" onclick="openScan()">🔄 Спробувати ще</button>';
+  }
+}
+
+function renderScan(d){
+  scanItems = d.items || [];
+  const un = d.unmatched || [];
+  if (!scanItems.length && !un.length){
+    $('scSub').textContent = 'Нічого не розпізнано.';
+    $('scBody').innerHTML = '<div class="empty" style="padding:16px">AI не знайшов позицій на фото 😕<br>Спробуй чіткіше фото при хорошому світлі.</div>';
+    $('scBtns').innerHTML =
+      '<button class="btn gray" onclick="closeScan()">Закрити</button>' +
+      '<button class="btn b" onclick="openScan()">🔄 Спробувати ще</button>';
+    return;
+  }
+  const w = document.createElement('div');
+  w.className = 'chklist';
+  scanItems.forEach((it, i) => {
+    const row = document.createElement('div');
+    row.className = 'chkrow';
+    row.innerHTML =
+      '<div class="cn"><div class="n">' + esc(it.name) + '</div>' +
+      '<div class="e">у накладній: ' + esc(it.invoice_name || '—') + '</div></div>' +
+      '<input type="number" inputmode="numeric" value="' + it.qty + '" data-i="' + i + '" data-f="qty" style="width:64px" title="Кількість">' +
+      '<input type="number" inputmode="decimal" value="' + (it.buy_price != null ? it.buy_price : '') + '" placeholder="₴" data-i="' + i + '" data-f="price" style="width:72px" title="Закупка">';
+    w.appendChild(row);
+  });
+  un.forEach(u => {
+    const row = document.createElement('div');
+    row.className = 'chkrow scrow-un';
+    row.innerHTML =
+      '<div class="cn"><div class="n">' + esc(u.invoice_name) + '</div>' +
+      '<div class="e">⚠️ немає такого товару в магазині — додай його вручну</div></div>';
+    w.appendChild(row);
+  });
+  $('scBody').innerHTML = '';
+  $('scBody').appendChild(w);
+  $('scSub').textContent = 'AI розпізнав ' + scanItems.length + ' позицій. Перевір кількість і ціни (шт / ₴ за одиницю).';
+  $('scBtns').innerHTML =
+    '<button class="btn gray" onclick="closeScan()">Скасувати</button>' +
+    '<button class="btn g" id="scGo" onclick="confirmScan()">📦 Прийняти все</button>';
+}
+
+async function confirmScan(){
+  // Забираем поправленные руками значения
+  document.querySelectorAll('#scBody input').forEach(inp => {
+    const i = parseInt(inp.dataset.i);
+    if (isNaN(i) || !scanItems[i]) return;
+    if (inp.dataset.f === 'qty'){
+      const v = parseInt(inp.value);
+      scanItems[i].qty = isNaN(v) ? 0 : v;
+    } else {
+      const v = parseFloat(inp.value);
+      scanItems[i].buy_price = (isNaN(v) || v <= 0) ? null : v;
+    }
+  });
+  const items = [];
+  scanItems.forEach(it => {
+    if (it.qty > 0) items.push({ product_id: it.product_id, qty: it.qty, buy_price: it.buy_price });
+  });
+  if (!items.length){ toast('Немає позицій для приймання'); return; }
+  const btn = $('scGo');
+  if (btn) btn.disabled = true;
+  try{
+    const r = await fetch(API + '/receipts/bulk', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ items: items })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Помилка');
+    closeScan();
+    toast('📦 Прийнято позицій: ' + d.accepted + ' ✅');
+    if (tg && tg.HapticFeedback){ try{ tg.HapticFeedback.notificationOccurred('success'); }catch(e){} }
+    loadProducts();
+  }catch(e){
+    toast('❌ ' + e.message);
+    if (btn) btn.disabled = false;
   }
 }
 
