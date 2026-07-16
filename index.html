@@ -464,7 +464,10 @@
     <button class="stockbtn rc" onclick="openRcpt()">🚚 Приход товару</button>
     <button class="stockbtn iv" onclick="openCheck()">🧮 Звірка залишків</button>
   </div>
-  <button class="histbtn" onclick="openHist()">📜 Історія складу і недостач</button>
+  <div class="stockbtns" style="margin-bottom:12px">
+    <button class="histbtn" style="margin:0" onclick="openHist()">📜 Історія складу</button>
+    <button class="histbtn" style="margin:0" onclick="openPlan()">📝 Що замовити? (AI)</button>
+  </div>
   <button class="addbtn" onclick="openForm()">＋ Додати товар</button>
   <div id="prodList"><div class="spin">Завантаження…</div></div>
 </div>
@@ -698,6 +701,19 @@
     </div>
     <div class="row2" style="margin-top:12px">
       <button class="btn gray" style="width:100%" onclick="closeQr()">Закрити</button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка: СПИСОК ЗАКУПІВЛІ [НОВОЕ] -->
+<div class="ov" id="ovPlan" onclick="if(event.target===this)closePlan()">
+  <div class="sheet">
+    <h3>📝 Список закупівлі</h3>
+    <div class="sub" id="plSub">Рахую швидкість продажів…</div>
+    <div class="chklist" id="plList"><div class="spin">Завантаження…</div></div>
+    <div class="row2" id="plBtns">
+      <button class="btn gray" onclick="closePlan()">Закрити</button>
+      <button class="btn b" id="plSend" onclick="sendPlan()">📩 В Telegram</button>
     </div>
   </div>
 </div>
@@ -1506,6 +1522,74 @@ async function bindCode(){
   }catch(e){
     toast('❌ ' + e.message);
   }
+}
+
+// ---------- СПИСОК ЗАКУПІВЛІ (AI-закупщик) [НОВОЕ] ----------
+function openPlan(){
+  $('ovPlan').classList.add('on');
+  loadPlan();
+}
+function closePlan(){ $('ovPlan').classList.remove('on'); }
+
+async function loadPlan(){
+  $('plSub').textContent = 'Рахую швидкість продажів за 14 днів…';
+  $('plList').innerHTML = '<div class="spin">🤖 Рахую, що замовити…</div>';
+  const sendBtn = $('plSend');
+  if (sendBtn) sendBtn.style.display = 'none';
+  try{
+    const r = await fetch(API + '/purchase-plan');
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Помилка');
+    const items = d.items || [];
+    if (!items.length){
+      $('plSub').textContent = 'Аналіз завершено.';
+      $('plList').innerHTML = '<div class="empty" style="padding:20px">Все в порядку — закуповувати поки нічого 👌</div>';
+      return;
+    }
+    const w = document.createElement('div');
+    items.forEach(it => {
+      const row = document.createElement('div');
+      row.className = 'sale' + (it.days_left !== null && it.days_left <= 2 ? ' bad' : '');
+      const info = 'залишок ' + it.stock +
+        (it.per_day > 0 ? ' · продається ' + it.per_day + '/день' : '') +
+        (it.days_left !== null ? ' · вистачить на ~' + it.days_left + ' дн' : '');
+      row.innerHTML =
+        '<div><div>' + esc(it.name) + '</div><div class="t">' + info + '</div></div>' +
+        '<div class="sum yel">замовити ' + it.order_qty + ' шт</div>';
+      w.appendChild(row);
+    });
+    if (d.advice){
+      const adv = document.createElement('div');
+      adv.className = 'chksum good';
+      adv.style.display = 'block';
+      adv.style.textAlign = 'left';
+      adv.style.fontWeight = '600';
+      adv.textContent = '🤖 ' + d.advice;
+      w.appendChild(adv);
+    }
+    $('plList').innerHTML = '';
+    $('plList').appendChild(w);
+    $('plSub').textContent = 'Позицій до закупівлі: ' + items.length + ' (найтерміновіші зверху)';
+    if (sendBtn) sendBtn.style.display = 'block';
+  }catch(e){
+    $('plSub').textContent = 'Щось пішло не так.';
+    $('plList').innerHTML = '<div class="empty" style="padding:16px">❌ ' + esc(e.message) + '</div>';
+  }
+}
+
+async function sendPlan(){
+  const btn = $('plSend');
+  if (btn) btn.disabled = true;
+  try{
+    const r = await fetch(API + '/purchase-plan/send', { method: 'POST' });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Помилка');
+    toast('📩 Список закупівлі у Telegram!');
+    if (tg && tg.HapticFeedback){ try{ tg.HapticFeedback.notificationOccurred('success'); }catch(e){} }
+  }catch(e){
+    toast('❌ ' + e.message);
+  }
+  if (btn) btn.disabled = false;
 }
 
 // ---------- ІМПОРТ ТОВАРІВ [НОВОЕ] ----------
