@@ -12,6 +12,7 @@
 # ============================================================
 
 import os
+import random
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -416,6 +417,107 @@ async def recent_checks(limit: int = 30):
         }
         for r in rows
     ]
+
+
+# ------------------------------------------------------------
+#  ДЕМО-НАПОЛНЕНИЕ МАГАЗИНА  [ВРЕМЕННОЕ]
+#  Открой https://.../seed-demo в браузере ОДИН раз —
+#  создаст 22 реальных товара и продажи за 14 дней.
+#  Работает только если магазин пустой (ничего не перезапишет).
+# ------------------------------------------------------------
+
+# (назва, закупка, продаж, залишок, мінімум, популярність)
+DEMO_PRODUCTS = [
+    ("Хліб «Український»",        16, 22, 24, 6, 10),
+    ("Батон нарізний",            14, 20, 20, 6, 9),
+    ("Молоко 2.5% 1л",            32, 42, 30, 8, 10),
+    ("Кефір 900г",                33, 44, 18, 5, 6),
+    ("Сметана 15% 350г",          38, 52, 15, 4, 5),
+    ("Яйця С1, десяток",          42, 55, 25, 6, 8),
+    ("Масло вершкове 200г",       68, 89, 12, 3, 4),
+    ("Сир твердий 300г",          95, 125, 10, 3, 3),
+    ("Ковбаса «Докторська» 400г", 88, 115, 12, 3, 5),
+    ("Сосиски молочні 400г",      72, 95, 14, 4, 5),
+    ("Кока-кола 0.5л",            17, 28, 48, 10, 9),
+    ("Вода «Моршинська» 1.5л",    14, 24, 40, 10, 8),
+    ("Пиво «Чернігівське» 0.5л",  22, 33, 36, 8, 7),
+    ("Чіпси Lay's 120г",          38, 55, 22, 5, 6),
+    ("Шоколад «Мілка» 90г",       42, 58, 18, 5, 5),
+    ("Печиво «Марія» 300г",       26, 38, 16, 4, 4),
+    ("Гречка 800г",               44, 62, 14, 4, 3),
+    ("Макарони «Чумак» 400г",     24, 35, 20, 5, 4),
+    ("Цукор 1кг",                 28, 39, 18, 5, 4),
+    ("Олія соняшникова 850мл",    55, 72, 15, 4, 4),
+    ("Туалетний папір, 4 рул.",   32, 45, 16, 4, 3),
+    ("Пакет-майка",               1, 3, 100, 20, 10),
+]
+
+
+@app.get("/seed-demo")
+async def seed_demo():
+    """Наполняет пустой магазин демо-товарами и историей продаж за 14 дней."""
+    async with pool.acquire() as con:
+        cnt = await con.fetchval("SELECT COUNT(*) FROM products;")
+        if cnt and cnt > 0:
+            return {
+                "ok": False,
+                "message": f"У магазині вже є {cnt} товарів — сідер працює "
+                           "тільки на порожній базі, щоб нічого не зіпсувати.",
+            }
+        # 1) Товары
+        ids = []
+        weights = []
+        for name, buy, sell, stock, ms, w in DEMO_PRODUCTS:
+            row = await con.fetchrow(
+                """INSERT INTO products (name, buy_price, sell_price, stock, min_stock)
+                   VALUES ($1, $2, $3, $4, $5) RETURNING id;""",
+                name, buy, sell, stock, ms,
+            )
+            ids.append((row["id"], buy, sell))
+            weights.append(w)
+        # 2) Продажи за прошлые 14 дней (историю остаток не трогает)
+        total_sales = 0
+        now_kyiv = datetime.now(KYIV)
+        for d in range(14, 0, -1):
+            day = now_kyiv - timedelta(days=d)
+            for _ in range(random.randint(15, 35)):
+                idx = random.choices(range(len(ids)), weights=weights, k=1)[0]
+                pid, buy, sell = ids[idx]
+                qty = random.choice([1, 1, 1, 1, 2, 2, 3])
+                sold = day.replace(
+                    hour=random.randint(8, 20),
+                    minute=random.randint(0, 59),
+                    second=random.randint(0, 59),
+                ).astimezone(timezone.utc)
+                await con.execute(
+                    """INSERT INTO sales (product_id, qty, sell_price, buy_price, sold_at)
+                       VALUES ($1, $2, $3, $4, $5);""",
+                    pid, qty, sell, buy, sold,
+                )
+                total_sales += 1
+        # 3) Немного продаж сегодня (до текущего часа), чтобы «Сьогодні» ожило
+        if now_kyiv.hour >= 8:
+            for _ in range(random.randint(4, 10)):
+                idx = random.choices(range(len(ids)), weights=weights, k=1)[0]
+                pid, buy, sell = ids[idx]
+                qty = random.choice([1, 1, 1, 2])
+                sold = now_kyiv.replace(
+                    hour=random.randint(8, max(8, now_kyiv.hour)),
+                    minute=random.randint(0, 59),
+                    second=random.randint(0, 59),
+                ).astimezone(timezone.utc)
+                await con.execute(
+                    """INSERT INTO sales (product_id, qty, sell_price, buy_price, sold_at)
+                       VALUES ($1, $2, $3, $4, $5);""",
+                    pid, qty, sell, buy, sold,
+                )
+                total_sales += 1
+    return {
+        "ok": True,
+        "products": len(ids),
+        "sales": total_sales,
+        "message": "Магазин наповнено! Відкривай Mini App 🛒",
+    }
 
 
 # ------------------------------------------------------------
