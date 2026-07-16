@@ -637,22 +637,36 @@ const tg = window.Telegram && window.Telegram.WebApp;
 if (tg) { try { tg.ready(); tg.expand(); } catch(e){} }
 
 // ---------- разворот на весь экран [НОВОЕ] ----------
+function isFS(){
+  return !!((tg && tg.isFullscreen) || document.fullscreenElement);
+}
 function winFull(){
-  try{ tg.requestFullscreen(); }
-  catch(e){ toast('Онови Telegram, щоб працював повний екран'); }
+  // 1) пробуем полный экран Telegram (новые версии)
+  if (tg && tg.isVersionAtLeast && tg.isVersionAtLeast('8.0')){
+    try{ tg.requestFullscreen(); return; }catch(e){}
+  }
+  // 2) пробуем обычный браузерный полный экран
+  try{
+    if (document.documentElement.requestFullscreen){
+      document.documentElement.requestFullscreen();
+      return;
+    }
+  }catch(e){}
+  toast('Онови Telegram, щоб працював повний екран');
 }
 function winRestore(){
-  try{ tg.exitFullscreen(); }catch(e){}
+  try{ if (tg && tg.isFullscreen){ tg.exitFullscreen(); return; } }catch(e){}
+  try{ if (document.fullscreenElement) document.exitFullscreen(); }catch(e){}
 }
 function updWinBtns(){
-  const fs = !!(tg && tg.isFullscreen);
+  const fs = isFS();
   const f = document.getElementById('wbFull');
   const r = document.getElementById('wbRest');
   if (f) f.style.display = fs ? 'none' : 'block';
   if (r) r.style.display = fs ? 'block' : 'none';
   // В полном экране контент уходит под часы/челку — добавляем отступ сверху
   let pad = 0;
-  if (fs){
+  if (fs && tg && tg.isFullscreen){
     try{
       pad = ((tg.contentSafeAreaInset && tg.contentSafeAreaInset.top) || 0)
           + ((tg.safeAreaInset && tg.safeAreaInset.top) || 0);
@@ -660,17 +674,14 @@ function updWinBtns(){
     if (!pad) pad = 40;
   }
   const top = document.querySelector('.top');
-  if (top) top.style.paddingTop = fs ? (16 + pad) + 'px' : '16px';
+  if (top) top.style.paddingTop = fs && tg && tg.isFullscreen ? (16 + pad) + 'px' : '16px';
 }
 (function(){
-  if (!tg) return;
-  try{
-    if (tg.isVersionAtLeast && tg.isVersionAtLeast('8.0')){
-      document.getElementById('winBtns').style.display = 'flex';
-      tg.onEvent('fullscreenChanged', updWinBtns);
-      updWinBtns();
-    }
-  }catch(e){}
+  const wb = document.getElementById('winBtns');
+  if (wb) wb.style.display = 'flex';  // кнопка видна ЗАВЖДИ
+  if (tg){ try{ tg.onEvent('fullscreenChanged', updWinBtns); }catch(e){} }
+  document.addEventListener('fullscreenchange', updWinBtns);
+  updWinBtns();
 })();
 
 let products = [];
