@@ -13,6 +13,7 @@
 
 import asyncio
 import json
+import math
 import os
 import random
 import re
@@ -1275,6 +1276,106 @@ async def director_test():
     await tg_send("🤖 <b>AI-директор на зв'язку!</b>\nТепер я сам писатиму тобі: "
                   "ранковий звіт о 8:00, тривоги про залишки та недостачі.")
     return {"ok": True, "message": "Повідомлення надіслано! Перевір Telegram."}
+
+
+# ------------------------------------------------------------
+#  AI-ЗАКУПЩИК: что и сколько заказать  [НОВОЕ]
+#  Считает скорость продаж за 14 дней и собирает список закупки
+#  с запасом на 7 дней. AI добавляет короткий совет.
+# ------------------------------------------------------------
+async def build_purchase_plan():
+    days_window = 14   # по какому периоду считаем скорость продаж
+    cover_days = 7     # на сколько дней вперёд закупаемся
+    since = (datetime.now(KYIV) - timedelta(days=days_window)).astimezone(timezone.utc)
+    async with pool.acquire() as con:
+        prods = await con.fetch("SELECT id, name, stock, min_stock FROM products ORDER BY name;")
+        sold = await con.fetch(
+            """SELECT product_id, COALESCE(SUM(qty),0) AS q
+               FROM sales WHERE sold_at >= $1 GROUP BY product_id;""",
+            since,
+        )
+    sold_map = {r["product_id"]: int(r["q"]) for r in sold}
+    items = []
+    for p in prods:
+        s14 = sold_map.get(p["id"], 0)
+        per_day = s14 / days_window
+        stock = p["stock"]
+        days_left = round(stock / per_day, 1) if per_day > 0 else None
+        need = 0
+        if per_day > 0:
+            need = max(0, math.ceil(per_day * cover_days - stock))
+        # Товар на пороге минимума — заказываем, даже если продажи редкие
+        if stock <= p["min_stock"]:
+            need = max(need, p["min_stock"] * 2 - stock, 1)
+        if need > 0:
+            items.append({
+                "product_id": p["id"],
+                "name": p["name"],
+                "stock": stock,
+                "per_day": round(per_day, 1),
+                "days_left": days_left,
+                "order_qty": int(need),
+            })
+    # Самое срочное — наверх (у кого меньше дней запаса)
+    items.sort(key=lambda x: x["days_left"] if x["days_left"] is not None else 999)
+    return items
+
+
+@app.get("/purchase-plan")
+async def purchase_plan():
+    """Список закупки: что и сколько заказать, по скорости продаж."""
+    items = await build_purchase_plan()
+    advice = ""
+    if ANTHROPIC_API_KEY and items:
+        try:
+            lines = "\n".join(
+                f"- {it['name']}: залишок {it['stock']}, продається {it['per_day']}/день, "
+                f"замовити {it['order_qty']} шт"
+                for it in items[:20]
+            )
+            payload = {
+                "model": "claude-sonnet-5",
+                "max_tokens": 300,
+                "messages": [{"role": "user", "content":
+                    "Ти — AI-закупівельник магазину. Ось розрахований список закупівлі:\n" + lines +
+                    "\n\nДай власнику 2-3 короткі поради українською щодо цієї закупівлі "
+                    "(на що звернути увагу в першу чергу). Звичайний текст без markdown."}],
+            }
+            async with httpx.AsyncClient(timeout=40) as client:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": ANTHROPIC_API_KEY,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json=payload,
+                )
+            if resp.status_code == 200:
+                advice = extract_text(resp.json())
+        except Exception as e:
+            print("purchase advice error:", str(e)[:200])
+    return {"ok": True, "items": items, "advice": advice}
+
+
+@app.post("/purchase-plan/send")
+async def purchase_plan_send():
+    """Отправляет список закупки владельцу в Telegram."""
+    if not TELEGRAM_BOT_TOKEN or not OWNER_CHAT_ID:
+        raise HTTPException(400, "Задай TELEGRAM_BOT_TOKEN і OWNER_CHAT_ID у Railway")
+    items = await build_purchase_plan()
+    if not items:
+        await tg_send("📝 <b>Список закупівлі</b>\n\nВсе в порядку — закуповувати поки нічого 👌")
+        return {"ok": True, "count": 0}
+    lines = "\n".join(
+        "• " + it["name"] + " — <b>" + str(it["order_qty"]) + " шт</b>"
+        + " (залишок " + str(it["stock"])
+        + (", ~" + str(it["days_left"]) + " дн" if it["days_left"] is not None else "")
+        + ")"
+        for it in items[:30]
+    )
+    await tg_send("📝 <b>Список закупівлі на найближчі дні:</b>\n\n" + lines)
+    return {"ok": True, "count": len(items)}
 
 
 # ------------------------------------------------------------
