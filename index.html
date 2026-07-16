@@ -152,17 +152,59 @@
     background:rgba(108,140,255,.06); color:var(--acc); font-size:15px; font-weight:800;
     cursor:pointer; margin-bottom:14px; font-family:'Manrope';
   }
-  /* ---------- форма ---------- */
-  .fld{margin-bottom:13px}
-  .fld label{display:block; font-size:12px; color:var(--mut); margin-bottom:7px; font-weight:800; text-transform:uppercase; letter-spacing:.5px}
-  .fld input{
+  /* ---------- СКЛАД: приход и сверка [НОВОЕ] ---------- */
+  .stockbtns{display:flex; gap:9px; margin-bottom:10px}
+  .stockbtn{
+    flex:1; padding:15px 6px; border-radius:15px; font-size:13.5px; font-weight:800;
+    cursor:pointer; font-family:'Manrope'; transition:transform .1s;
+  }
+  .stockbtn:active{transform:scale(.97)}
+  .stockbtn.rc{
+    border:1px dashed rgba(0,214,143,.55); background:rgba(0,214,143,.07); color:var(--grn);
+  }
+  .stockbtn.iv{
+    border:1px dashed rgba(255,194,77,.55); background:rgba(255,194,77,.07); color:var(--yel);
+  }
+  .histbtn{
+    width:100%; padding:11px; border-radius:13px; border:1px solid var(--line);
+    background:var(--glass); color:var(--mut); font-size:12.5px; font-weight:800;
+    cursor:pointer; margin-bottom:12px; font-family:'Manrope';
+  }
+  .fld select{
     width:100%; padding:14px; border-radius:13px; border:1px solid var(--line);
     background:rgba(255,255,255,.04); color:var(--txt); font-size:16px; outline:none;
-    font-family:'Manrope'; font-weight:700;
+    font-family:'Manrope'; font-weight:700; -webkit-appearance:none; appearance:none;
   }
-  .fld input:focus{border-color:var(--acc); box-shadow:0 0 0 3px rgba(108,140,255,.15)}
-  .frow{display:flex; gap:10px}
-  .frow .fld{flex:1}
+  .fld select:focus{border-color:var(--acc); box-shadow:0 0 0 3px rgba(108,140,255,.15)}
+  .fld select option{background:#131a2c; color:var(--txt)}
+  .chklist{max-height:46vh; overflow-y:auto; margin-bottom:12px}
+  .chkrow{
+    display:flex; align-items:center; gap:10px; padding:10px 2px;
+    border-bottom:1px solid var(--line);
+  }
+  .chkrow:last-child{border-bottom:none}
+  .chkrow .cn{flex:1; min-width:0}
+  .chkrow .cn .n{font-size:14px; font-weight:800}
+  .chkrow .cn .e{font-size:11.5px; color:var(--mut); font-weight:700; margin-top:2px}
+  .chkrow input{
+    width:80px; padding:11px 8px; border-radius:11px; border:1px solid var(--line);
+    background:rgba(255,255,255,.04); color:var(--txt); font-size:16px; text-align:center;
+    font-family:'Manrope'; font-weight:800; outline:none; flex:none;
+  }
+  .chkrow input:focus{border-color:var(--acc)}
+  .chksum{
+    text-align:center; padding:13px; border-radius:14px; margin-bottom:14px;
+    font-size:13.5px; font-weight:800; display:none;
+  }
+  .chksum.bad{
+    display:block; background:rgba(255,92,122,.08);
+    border:1px solid rgba(255,92,122,.35); color:var(--red);
+  }
+  .chksum.good{
+    display:block; background:rgba(0,214,143,.08);
+    border:1px solid rgba(0,214,143,.3); color:var(--grn);
+  }
+  .chksum b{font-family:'Unbounded'; font-size:14px}
   /* ---------- карточки статистики ---------- */
   .stats{display:grid; grid-template-columns:1fr 1fr; gap:11px; margin-bottom:16px}
   .scard{
@@ -202,6 +244,10 @@
     font-family:'Unbounded'; font-weight:700; font-size:13px; color:var(--grn);
     white-space:nowrap; margin-left:10px;
   }
+  .sale .sum.red{color:var(--red)}
+  .sale .sum.yel{color:var(--yel)}
+  .sale.bad{border-color:rgba(255,92,122,.4)}
+  .sale.plus{border-color:rgba(255,194,77,.35)}
   /* ---------- ДИНАМІКА ---------- */
   .periods{display:flex; gap:8px; margin-bottom:14px}
   .pchip{
@@ -357,6 +403,11 @@
 
 <!-- ЭКРАН: ТОВАРИ -->
 <div class="page" id="pageProducts">
+  <div class="stockbtns">
+    <button class="stockbtn rc" onclick="openRcpt()">🚚 Приход товару</button>
+    <button class="stockbtn iv" onclick="openCheck()">🧮 Звірка залишків</button>
+  </div>
+  <button class="histbtn" onclick="openHist()">📜 Історія складу і недостач</button>
   <button class="addbtn" onclick="openForm()">＋ Додати товар</button>
   <div id="prodList"><div class="spin">Завантаження…</div></div>
 </div>
@@ -396,13 +447,13 @@
 <div class="page" id="pageAI">
   <div class="aiwrap">
     <div class="aimsgs" id="aiMsgs">
-      <div class="msg a">Привіт! Я твій AI-порадник 🤖 Бачу всі товари, залишки та продажі магазину. Питай що завгодно!</div>
+      <div class="msg a">Привіт! Я твій AI-порадник 🤖 Бачу всі товари, залишки, приходи, продажі та недостачі магазину. Питай що завгодно!</div>
     </div>
     <div class="aisugs" id="aiSugs">
       <button class="sug" onclick="askSug(this)">Що краще продається?</button>
       <button class="sug" onclick="askSug(this)">Скільки я заробив за місяць?</button>
       <button class="sug" onclick="askSug(this)">Що треба докупити?</button>
-      <button class="sug" onclick="askSug(this)">Дай пораду по магазину</button>
+      <button class="sug" onclick="askSug(this)">Чи є недостачі?</button>
     </div>
     <div class="airow">
       <input id="aiInp" placeholder="Спитай про свій магазин…" onkeydown="if(event.key==='Enter')askAI()">
@@ -464,6 +515,58 @@
     </div>
     <div id="delWrap" style="display:none; margin-top:10px">
       <button class="btn r" style="width:100%" onclick="delProduct()">🗑 Видалити товар</button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка: ПРИХОД ТОВАРУ [НОВОЕ] -->
+<div class="ov" id="ovRcpt" onclick="if(event.target===this)closeRcpt()">
+  <div class="sheet">
+    <h3>🚚 Приход товару</h3>
+    <div class="sub">Що привезли на склад?</div>
+    <div class="fld">
+      <label>Товар</label>
+      <select id="rcProd"></select>
+    </div>
+    <div class="frow">
+      <div class="fld">
+        <label>Скільки прийшло, шт</label>
+        <input id="rcQty" type="number" inputmode="numeric" placeholder="10">
+      </div>
+      <div class="fld">
+        <label>Нова закупка, ₴</label>
+        <input id="rcPrice" type="number" inputmode="decimal" placeholder="не обов'язково">
+      </div>
+    </div>
+    <div class="row2" style="margin-top:6px">
+      <button class="btn gray" onclick="closeRcpt()">Скасувати</button>
+      <button class="btn g" id="rcBtn" onclick="doReceipt()">📦 Прийняти</button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка: ЗВІРКА ЗАЛИШКІВ [НОВОЕ] -->
+<div class="ov" id="ovCheck" onclick="if(event.target===this)closeCheck()">
+  <div class="sheet">
+    <h3>🧮 Звірка залишків</h3>
+    <div class="sub" id="chkSub">Порахуй товар на полицях і впиши реальну кількість. Що не рахував — залиш порожнім.</div>
+    <div class="chksum" id="chkSum"></div>
+    <div class="chklist" id="chkList"></div>
+    <div class="row2" id="chkBtns">
+      <button class="btn gray" onclick="closeCheck()">Скасувати</button>
+      <button class="btn b" id="chkBtn" onclick="doCheck()">🔍 Перевірити</button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка: ІСТОРІЯ СКЛАДУ [НОВОЕ] -->
+<div class="ov" id="ovHist" onclick="if(event.target===this)closeHist()">
+  <div class="sheet">
+    <h3>📜 Історія складу</h3>
+    <div class="sub">Останні приходи та виявлені недостачі</div>
+    <div class="chklist" id="histList"><div class="spin">Завантаження…</div></div>
+    <div class="row2">
+      <button class="btn gray" onclick="closeHist()">Закрити</button>
     </div>
   </div>
 </div>
@@ -715,6 +818,202 @@ function renderProdList(){
     d.appendChild(eb);
     w.appendChild(d);
   });
+}
+
+// ---------- ПРИХОД ТОВАРУ [НОВОЕ] ----------
+function openRcpt(){
+  if (!products.length){ toast('Спочатку додай товари 📦'); return; }
+  const sel = $('rcProd');
+  sel.innerHTML = '';
+  products.forEach(p => {
+    const o = document.createElement('option');
+    o.value = p.id;
+    o.textContent = p.name + ' (залишок: ' + p.stock + ')';
+    sel.appendChild(o);
+  });
+  $('rcQty').value = '';
+  $('rcPrice').value = '';
+  $('ovRcpt').classList.add('on');
+}
+function closeRcpt(){ $('ovRcpt').classList.remove('on'); }
+
+async function doReceipt(){
+  const pid = parseInt($('rcProd').value);
+  const qty = parseInt($('rcQty').value);
+  if (!pid){ toast('Обери товар'); return; }
+  if (!qty || qty <= 0){ toast('Введи кількість'); return; }
+  const priceVal = parseFloat($('rcPrice').value);
+  const body = { product_id: pid, qty: qty };
+  if (!isNaN(priceVal) && priceVal > 0) body.buy_price = priceVal;
+  const btn = $('rcBtn');
+  btn.disabled = true;
+  try{
+    const r = await fetch(API + '/receipts', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Помилка');
+    closeRcpt();
+    const p = products.find(x => x.id === pid);
+    toast('📦 Прийнято: ' + (p ? p.name : 'товар') + ' +' + qty + ' шт · на складі ' + d.new_stock);
+    if (tg && tg.HapticFeedback){ try{ tg.HapticFeedback.notificationOccurred('success'); }catch(e){} }
+    loadProducts();
+  }catch(e){
+    toast('❌ ' + e.message);
+  }
+  btn.disabled = false;
+}
+
+// ---------- ЗВІРКА ЗАЛИШКІВ [НОВОЕ] ----------
+function openCheck(){
+  if (!products.length){ toast('Спочатку додай товари 📦'); return; }
+  const w = $('chkList');
+  w.innerHTML = '';
+  products.forEach(p => {
+    const d = document.createElement('div');
+    d.className = 'chkrow';
+    d.innerHTML =
+      '<div class="cn"><div class="n">' + esc(p.name) + '</div>' +
+      '<div class="e">в системі: ' + p.stock + ' шт</div></div>' +
+      '<input type="number" inputmode="numeric" placeholder="' + p.stock + '" data-pid="' + p.id + '">';
+    w.appendChild(d);
+  });
+  $('chkSum').className = 'chksum';
+  $('chkSum').textContent = '';
+  $('chkSub').textContent = 'Порахуй товар на полицях і впиши реальну кількість. Що не рахував — залиш порожнім.';
+  $('chkBtns').innerHTML =
+    '<button class="btn gray" onclick="closeCheck()">Скасувати</button>' +
+    '<button class="btn b" id="chkBtn" onclick="doCheck()">🔍 Перевірити</button>';
+  $('ovCheck').classList.add('on');
+}
+function closeCheck(){ $('ovCheck').classList.remove('on'); }
+
+async function doCheck(){
+  const items = [];
+  document.querySelectorAll('#chkList input').forEach(inp => {
+    const v = inp.value.trim();
+    if (v === '') return;
+    const n = parseInt(v);
+    if (isNaN(n) || n < 0) return;
+    items.push({ product_id: parseInt(inp.dataset.pid), actual: n });
+  });
+  if (!items.length){ toast('Впиши хоча б один залишок'); return; }
+  const btn = $('chkBtn');
+  if (btn) btn.disabled = true;
+  try{
+    const r = await fetch(API + '/inventory/check', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ items: items })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Помилка');
+    renderCheckResults(d);
+    loadProducts();
+  }catch(e){
+    toast('❌ ' + e.message);
+    if (btn) btn.disabled = false;
+  }
+}
+
+function renderCheckResults(d){
+  const w = $('chkList');
+  w.innerHTML = '';
+  d.results.forEach(r => {
+    const div = document.createElement('div');
+    let cls = 'sale', right = '', info = '';
+    if (r.diff < 0){
+      cls = 'sale bad';
+      right = '<div class="sum red">−' + (-r.diff) + ' шт · ' + uah(r.loss) + '</div>';
+      info = 'недостача! мало бути ' + r.expected + ', реально ' + r.actual;
+    } else if (r.diff > 0){
+      cls = 'sale plus';
+      right = '<div class="sum yel">+' + r.diff + ' шт</div>';
+      info = 'надлишок: мало бути ' + r.expected + ', реально ' + r.actual;
+    } else {
+      right = '<div class="sum">✓</div>';
+      info = 'все сходиться: ' + r.actual + ' шт';
+    }
+    div.className = cls;
+    div.innerHTML = '<div><div>' + esc(r.name) + '</div><div class="t">' + info + '</div></div>' + right;
+    w.appendChild(div);
+  });
+  const sum = $('chkSum');
+  if (d.shortages.length){
+    sum.className = 'chksum bad';
+    sum.innerHTML = '😱 Недостача по ' + d.shortages.length + ' товарах · втрати <b>' + uah(d.total_loss) + '</b>';
+  } else {
+    sum.className = 'chksum good';
+    sum.innerHTML = '✅ Все сходиться! Перевірено: ' + d.checked;
+  }
+  $('chkSub').textContent = 'Залишки в системі оновлено до реальних.';
+  $('chkBtns').innerHTML =
+    '<button class="btn g" style="width:100%" onclick="closeCheck()">Готово</button>';
+  if (tg && tg.HapticFeedback){
+    try{ tg.HapticFeedback.notificationOccurred(d.shortages.length ? 'warning' : 'success'); }catch(e){}
+  }
+}
+
+// ---------- ІСТОРІЯ СКЛАДУ [НОВОЕ] ----------
+function openHist(){
+  $('histList').innerHTML = '<div class="spin">Завантаження…</div>';
+  $('ovHist').classList.add('on');
+  loadHist();
+}
+function closeHist(){ $('ovHist').classList.remove('on'); }
+
+async function loadHist(){
+  const w = $('histList');
+  try{
+    const [r1, r2] = await Promise.all([
+      fetch(API + '/inventory/recent'),
+      fetch(API + '/receipts/recent')
+    ]);
+    const checks = await r1.json();
+    const rcpts = await r2.json();
+    w.innerHTML = '';
+
+    const h1 = document.createElement('h2');
+    h1.className = 'sec'; h1.style.marginTop = '4px';
+    h1.textContent = '⚠️ Недостачі та надлишки';
+    w.appendChild(h1);
+    if (!Array.isArray(checks) || !checks.length){
+      w.insertAdjacentHTML('beforeend', '<div class="empty" style="padding:14px">Розбіжностей поки не було ✅</div>');
+    } else {
+      checks.forEach(c => {
+        const bad = c.diff < 0;
+        const div = document.createElement('div');
+        div.className = 'sale' + (bad ? ' bad' : ' plus');
+        div.innerHTML =
+          '<div><div>' + esc(c.name) + '</div>' +
+          '<div class="t">' + esc(c.date + ' ' + c.time) + ' · було ' + c.expected + ', реально ' + c.actual + '</div></div>' +
+          '<div class="sum ' + (bad ? 'red' : 'yel') + '">' + (bad ? '−' + (-c.diff) : '+' + c.diff) + ' шт</div>';
+        w.appendChild(div);
+      });
+    }
+
+    const h2 = document.createElement('h2');
+    h2.className = 'sec';
+    h2.textContent = '🚚 Останні приходи';
+    w.appendChild(h2);
+    if (!Array.isArray(rcpts) || !rcpts.length){
+      w.insertAdjacentHTML('beforeend', '<div class="empty" style="padding:14px">Приходів поки не було 💤</div>');
+    } else {
+      rcpts.forEach(s => {
+        const div = document.createElement('div');
+        div.className = 'sale';
+        div.innerHTML =
+          '<div><div>' + esc(s.name) + ' +' + s.qty + ' шт</div>' +
+          '<div class="t">' + esc(s.date + ' ' + s.time) + '</div></div>' +
+          '<div class="sum">' + uah(s.sum) + '</div>';
+        w.appendChild(div);
+      });
+    }
+  }catch(e){
+    w.innerHTML = '<div class="empty">Не вдалося завантажити 😔</div>';
+  }
 }
 
 // ---------- форма товара ----------
